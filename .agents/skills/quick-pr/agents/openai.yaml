@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quick PR"
+  short_description: "Verify and submit this repo through a pull request"
+  default_prompt: "Use $quick-pr to verify the requested changes and submit them through a pull request."
