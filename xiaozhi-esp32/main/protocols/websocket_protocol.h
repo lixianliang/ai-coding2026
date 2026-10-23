@@ -20,11 +20,15 @@ public:
     bool OpenAudioChannel() override;
     void CloseAudioChannel(bool send_goodbye = true) override;
     bool IsAudioChannelOpened() const override;
+    bool SetUrlOverride(const std::string& url, const std::string& token) override;
+    void ClearUrlOverride() override;
 
 private:
     EventGroupHandle_t event_group_handle_;
     std::shared_ptr<WebSocket> websocket_;
     int version_ = 1;
+    std::string url_override_;
+    std::string token_override_;
 
     void ParseServerHello(const cJSON* root);
     bool SendText(const std::string& text) override;

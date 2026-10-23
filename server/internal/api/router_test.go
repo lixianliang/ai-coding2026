@@ -37,6 +37,7 @@ type scriptedSession struct {
 	mu        sync.Mutex
 	audio     bytes.Buffer
 	closeOnce sync.Once
+	eventsMu  sync.RWMutex
 }
 
 func (s *scriptedSession) Push(_ context.Context, pcm []byte) error {
@@ -55,7 +56,9 @@ func (s *scriptedSession) Finalize(context.Context) error {
 	if text == "" {
 		return errors.New("empty transcript")
 	}
+	s.eventsMu.RLock()
 	s.events <- game.ASREvent{Kind: game.ASREventFinal, Text: text}
+	s.eventsMu.RUnlock()
 	s.finalizes.Add(1)
 	return nil
 }
@@ -63,7 +66,11 @@ func (s *scriptedSession) Finalize(context.Context) error {
 func (s *scriptedSession) Events() <-chan game.ASREvent { return s.events }
 
 func (s *scriptedSession) Close() error {
-	s.closeOnce.Do(func() { close(s.events) })
+	s.closeOnce.Do(func() {
+		s.eventsMu.Lock()
+		close(s.events)
+		s.eventsMu.Unlock()
+	})
 	return nil
 }
 

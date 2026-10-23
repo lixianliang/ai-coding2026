@@ -71,6 +71,21 @@ bool WebsocketProtocol::IsAudioChannelOpened() const {
     return websocket_ != nullptr && websocket_->IsConnected() && !error_occurred_ && !IsTimeout();
 }
 
+bool WebsocketProtocol::SetUrlOverride(const std::string& url, const std::string& token) {
+    if (url.empty()) {
+        return false;
+    }
+    url_override_ = url;
+    token_override_ = token;
+    version_ = 1;
+    return true;
+}
+
+void WebsocketProtocol::ClearUrlOverride() {
+    url_override_.clear();
+    token_override_.clear();
+}
+
 void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
     (void)send_goodbye;  // Websocket doesn't need to send goodbye message
     websocket_.reset();
@@ -78,10 +93,14 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
 
 bool WebsocketProtocol::OpenAudioChannel() {
     Settings settings("websocket", false);
-    std::string url = settings.GetString("url");
-    std::string token = settings.GetString("token");
+    bool use_override = !url_override_.empty();
+    std::string url = use_override ? url_override_ : settings.GetString("url");
+    std::string token = use_override ? token_override_ : settings.GetString("token");
+    if (use_override) {
+        ClearUrlOverride();
+    }
     int version = settings.GetInt("version");
-    if (version != 0) {
+    if (!use_override && version != 0) {
         version_ = version;
     }
 

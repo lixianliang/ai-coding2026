@@ -13,4 +13,22 @@
 
 产品定位与商业设计：[docs/design/turtle-soup-product-positioning.md](docs/design/turtle-soup-product-positioning.md)。
 
-同事原方案：[docs/design/turtle-soup-game.md](docs/design/turtle-soup-game.md)。
+原方案：[docs/design/turtle-soup-game.md](docs/design/turtle-soup-game.md)。
+
+## AI 工程效率
+
+仓库内置可重复使用的研发 skills，减少每次从零排查环境与回归链路：
+
+- `.agents/skills/xiaozhi-yunliao-s3-firmware/`：`yunliao-s3` 构建、烧录、串口日志与真机验收。
+- `.agents/skills/go-test-engineering/`：Go 单测/E2E 分层、race 与异步测试约束。
+- `.agents/skills/go-provider-debugging/`：ASR/LLM/TTS provider 与完整语音链路定位。
+- `.agents/skills/quick-pr/`：限定路径的格式化、静态检查、提交和 PR 流程。
+
+常用回归命令：
+
+```bash
+cd server
+go run ./cmd/eval -config config.local.json
+go run ./cmd/eval -config config.local.json -e2e
+go test -race ./...
+```

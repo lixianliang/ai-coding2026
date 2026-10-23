@@ -6,7 +6,7 @@
         "WARNING": "警告",
         "INFO": "信息",
         "ERROR": "错误",
-        "GAME_SERVICE_UNAVAILABLE": "游戏服务暂未接入",
+        "GAME_SERVICE_UNAVAILABLE": "游戏服务连接失败",
         "VERSION": "版本 ",
         "LOADING_PROTOCOL": "登录服务器...",
         "INITIALIZING": "正在初始化...",
