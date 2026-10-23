@@ -6,6 +6,7 @@
         "WARNING": "Warning",
         "INFO": "Information",
         "ERROR": "Error",
+        "GAME_SERVICE_UNAVAILABLE": "Game service is not available yet",
         "VERSION": "Ver ",
         "LOADING_PROTOCOL": "Logging in...",
         "INITIALIZING": "Initializing...",
