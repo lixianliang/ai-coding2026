@@ -10,4 +10,6 @@ ESP32-S3 多人语音海龟汤：1～6 个真人玩家、AI 主持、无按键�
 
 简化方案、评分展示和 3 分钟 Demo：[docs/design/turtle-soup-game-simplified.md](docs/design/turtle-soup-game-simplified.md)。
 
+产品定位与商业设计：[docs/design/turtle-soup-product-positioning.md](docs/design/turtle-soup-product-positioning.md)。
+
 同事原方案：[docs/design/turtle-soup-game.md](docs/design/turtle-soup-game.md)。
