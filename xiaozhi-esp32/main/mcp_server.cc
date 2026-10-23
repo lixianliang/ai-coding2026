@@ -49,6 +49,19 @@ void McpServer::AddCommonTools() {
                 return board.GetDeviceStatusJson();
             });
 
+    AddTool("self.game.start",
+            "Join the specified room to start the turtle soup game. Call this when the user "
+            "wants to play turtle soup in room 1, 2 or 3. The current conversation ends after "
+            "the request is accepted.",
+            PropertyList({Property("room_id", kPropertyTypeInteger, 1, 3)}),
+            [](const PropertyList& properties) -> ReturnValue {
+                int room_id = properties["room_id"].value<int>();
+                auto& app = Application::GetInstance();
+                // 先回复 MCP 受理结果，下一轮主任务再关闭原小智连接
+                app.Schedule([&app, room_id]() { app.StartGame(room_id); });
+                return std::string("已接受启动请求");
+            });
+
     AddTool("self.audio_speaker.set_volume",
             "Set the volume of the audio speaker. If the current volume is unknown, you must call "
             "`self.get_device_status` tool first and then call this tool.",

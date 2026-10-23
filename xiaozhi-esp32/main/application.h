@@ -126,6 +126,9 @@ public:
      */
     void ResetProtocol();
 
+    // 关闭原小智连接并加入游戏房间，需在主任务调用（docs/design/turtle-soup-game.md）
+    void StartGame(int room_id);
+
 private:
     Application();
     ~Application();
