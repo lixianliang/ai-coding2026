@@ -1,0 +1,30 @@
+{
+  "address": ":8080",
+  "database": "data/game.db",
+  "device_token": "",
+  "turn_duration_seconds": 60,
+  "game_duration_seconds": 600,
+  "asr": {
+    "api_key": "replace-with-qwen-api-key",
+    "url": "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
+    "model": "qwen3-asr-flash-realtime",
+    "language": "zh"
+  },
+  "llm": {
+    "api_key": "replace-with-deepseek-api-key",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-v4-flash",
+    "max_tokens": 512,
+    "temperature": 0.1
+  },
+  "tts": {
+    "api_key": "replace-with-minimax-api-key",
+    "url": "api.minimaxi.com",
+    "model": "speech-2.8-turbo",
+    "voice_id": "male-qn-qingse",
+    "group_id": "",
+    "speed": 1.0,
+    "volume": 1.0,
+    "pitch": 0
+  }
+}

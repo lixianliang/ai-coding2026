@@ -774,6 +774,19 @@ void Application::Alert(const char* status, const char* message, const char* emo
     }
 }
 
+void Application::StartGame(int room_id) {
+    ESP_LOGI(TAG, "Start game, room_id: %d", room_id);
+    if (protocol_->IsAudioChannelOpened()) {
+        protocol_->CloseAudioChannel();
+    }
+    // 游戏协议待定：确定后在此连接 Go 游戏服务并申请加入 room_id，当前直接留在原小智服务
+    // 排在通道关闭回调之后提示，避免提示被回调清空
+    Schedule([this]() {
+        Alert(Lang::Strings::ERROR, Lang::Strings::GAME_SERVICE_UNAVAILABLE, "cloud_off",
+              Lang::Sounds::OGG_EXCLAMATION);
+    });
+}
+
 void Application::DismissAlert() {
     last_error_message_.clear();
     if (GetDeviceState() == kDeviceStateIdle) {
