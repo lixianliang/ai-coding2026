@@ -1,13 +1,13 @@
 # 海龟汤 Go 服务端
 
-固定房间 `1/2/3` 的海龟汤 MVP：AI 出题、服务端 VAD/ASR、AI 判题、TTS 播报、房间内语音转发。设备继续使用现有 `hello`、`listen`、`tts` 控制消息和 Opus 音频格式。
+固定房间 `1/2/3` 的单设备海龟汤 MVP：每房一台 `yunliao-s3`，玩家围坐共享设备与 AI 主持人；玩家按 BOOT 开始收音，再按一次结束。设备继续使用现有 `hello`、`listen`、`tts` 控制消息和 Opus 音频格式。
 
 ```text
-设备 Opus ──► 服务端解码 PCM ──► Qwen Realtime ASR（自带 VAD）
+设备 Opus ──► Go 解码 PCM ──► Qwen Realtime ASR（manual commit）
                                       │
-玩家语音 Opus ──► 房间其他设备          ├─ final text ──► DeepSeek 判题
+                                      ├─ final text ──► DeepSeek 判题
                                       │
-设备 Opus ◄── 编码 PCM ◄── MiniMax TTS ◄┘
+设备 Opus ◄── Go 编码 PCM ◄── MiniMax TTS ◄┘
 ```
 
 ## 启动
@@ -27,21 +27,22 @@ go run ./cmd/server
 | `address` | `:8080` | HTTP/WebSocket 监听地址 |
 | `database` | `data/game.db` | SQLite 路径；`:memory:` 使用内存库 |
 | `device_token` | 空 | 设备 WebSocket Bearer token；空值关闭鉴权，仅限本地开发 |
-| `turn_duration_seconds` | `60` | 单人发言上限 |
+| `turn_duration_seconds` | `60` | 单次收音上限 |
 | `game_duration_seconds` | `600` | 单局上限 |
 | `asr` / `llm` / `tts` | 见示例 | Qwen / DeepSeek / MiniMax 地址、模型和密钥 |
 
 ## 游戏规则
 
-- 每房最多 6 台设备；固定房间 `1/2/3`。
-- 每局 10 分钟，每次发言最多 60 秒；不固定轮流，谁先被 Qwen VAD 检测到起音谁获得发言权。
-- 发言者的 Opus 音频实时转发给房间内其他设备；其他有资格设备收到 `tts start` 后闭麦。
-- ASR final 文本交给 DeepSeek 判定：`yes/no/close/irrelevant/correct`。
-- 判定结果和固定汤底都由 MiniMax 合成，编码成 Opus 下发给房间设备。
-- 局中加入的设备本轮只收听，下一局开始后获得发言资格。
-- 猜中或超时后向全房朗读汤底并进入讨论态，不自动开下一局；有资格玩家说“游戏继续”后开始下一题。
-- 讨论发言按同一抢麦规则串行，语音转发给同房其他设备但不做判题；说“退出游戏”关闭当前设备连接。
-- 房间状态只在内存中维护，不做掉线快照恢复。
+- 每房一台设备；固定房间 `1/2/3`，第二台设备连接返回 `room is full`。
+- 每局 10 分钟，单次收音最多 60 秒。
+- BOOT 第一次按发送 `listen state=start mode=manual`；第二次按发送 `listen state=stop`。
+- `listen start` 前和 `listen stop` 后的音频丢弃；只有 `stop` 才提交 ASR。
+- 服务端用 Qwen ASR final 文本交给 DeepSeek 判定：`yes/no/close/irrelevant/correct`。
+- 判定和固定汤底都由 MiniMax 合成，编码成 Opus 下发给设备；固定汤底文本来自题库，不由 LLM 改写。
+- AI 播报时设备处于 `speaking`，忽略 BOOT；`tts stop` 后保持 `idle`。
+- 猜中或超时后朗读汤底并进入讨论态，不自动开下一局；按 BOOT 说“游戏继续”才开新题。
+- 讨论态语音不做判题；说“退出游戏”关闭连接并释放房间。
+- 玩家之间现场直接交流，服务端不接收也不转发玩家音频；首版不做声纹、说话人分离、AI 玩家、真人主持和掉线恢复。
 
 ## 设备协议
 
@@ -54,11 +55,13 @@ Protocol-Version: 1|2|3
 Authorization: Bearer <device_token>
 ```
 
-首帧必须是 `hello`，服务端返回 `hello` 后入房。设备上传 `listen` 和二进制 Opus 帧。服务端复用三类 TTS 控制：
+首帧必须是 `hello`，服务端返回 `hello` 后入房并朗读汤面。设备上传 `listen` 和二进制 Opus 帧。服务端复用 TTS 控制：
 
-- `{"type":"tts","state":"start"}`：禁麦或开始播放。
+- `{"type":"tts","state":"start"}`：设备进入播报态，不收麦。
 - `{"type":"tts","state":"sentence_start","text":"..."}`：当前朗读文本。
-- `{"type":"tts","state":"stop"}`：播放结束，固件在播放队列排空后恢复收音。
+- `{"type":"tts","state":"stop"}`：播放结束；manual 模式下设备回到 idle。
+
+不使用 `waiting/playing/play_done` 等新状态。
 
 ## 浏览器链路测试
 
@@ -71,24 +74,7 @@ Content-Type: application/octet-stream
 <raw PCM>
 ```
 
-返回 ASR 文本、判题结果、回复文本，以及可直接播放的 PCM：
-
-```json
-{
-  "code": 0,
-  "data": {
-    "transcript": "这碗汤和他妈妈有关吗？",
-    "verdict": "yes",
-    "speech": "是。",
-    "audio_pcm_base64": "...",
-    "sample_rate": 16000,
-    "channels": 1,
-    "bits_per_sample": 16
-  }
-}
-```
-
-浏览器麦克风只允许在 `localhost` 或 HTTPS 页面使用。若配置了 `device_token`，在页面输入同一 token。
+返回 ASR 文本、判题结果、回复文本，以及可直接播放的 PCM。浏览器麦克风只允许在 `localhost` 或 HTTPS 页面使用。若配置了 `device_token`，在页面输入同一 token。
 
 ## 评估
 
@@ -104,7 +90,7 @@ go run ./cmd/eval -config config.local.json
 go run ./cmd/eval -config config.local.json -e2e
 ```
 
-评估集覆盖 `yes/no/close/irrelevant/correct` 五类。本次实测两条命令均为 `5/5 passed`，完整链路约 20～30 秒；结果会随网络和模型服务波动。
+评估集覆盖 `yes/no/close/irrelevant/correct` 五类。本次实测分别为 `5/5 passed in 3.6s` 和 `5/5 passed in 19.8s`；结果会随网络和模型服务波动。
 
 ## 检查
 
@@ -116,10 +102,11 @@ go test -race ./...
 staticcheck ./...
 ```
 
-单元测试覆盖协议帧、Opus 编解码、SQLite 题库、多人抢麦与候场、玩家语音同房广播、AI 回复全房可听、结束讨论不自动开题、“游戏继续”开新题、离场恢复和 MiniMax hex 音频解码。
+测试覆盖 manual start/stop、start 前音频丢弃、第二设备拒绝、猜中后朗读固定汤底、讨论态不判题、“游戏继续”、“退出游戏”、60 秒收音超时和 10 分钟局时超时。
 
 ## 验证边界
 
 - 已验证云端 Qwen ASR、DeepSeek 判题、MiniMax TTS 和 `/playground` HTTP 链路。
-- 未验证 ESP32 真机音频、Linx 真机 MCP 切流和公网 4G 环境。
+- 已构建并烧录 `yunliao-s3`，启动日志确认板型、8 MB PSRAM 和 ES8388 初始化成功。
+- 未验证真机 Wi-Fi/4G 下的 Game WSS、Linx 本地 MCP 切流和完整按键音频往返；当前设备没有已保存的 Wi-Fi，进入配网模式。
 - 当前不做掉线快照恢复；设备断开即离房。

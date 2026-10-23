@@ -1,6 +1,7 @@
 package game
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -14,8 +15,7 @@ const debugTranscriptPrefix = "say:"
 type ASREventKind uint8
 
 const (
-	ASREventStarted ASREventKind = iota + 1
-	ASREventPartial
+	ASREventPartial ASREventKind = iota + 1
 	ASREventFinal
 )
 
@@ -26,6 +26,7 @@ type ASREvent struct {
 
 type ASRSession interface {
 	Push(context.Context, []byte) error
+	Finalize(context.Context) error
 	Events() <-chan ASREvent
 	Close() error
 }
@@ -45,17 +46,22 @@ func (DebugASR) Open(context.Context, string) (ASRSession, error) {
 type debugASRSession struct {
 	events    chan ASREvent
 	closeOnce sync.Once
+	audio     bytes.Buffer
 }
 
 func (s *debugASRSession) Push(_ context.Context, pcm []byte) error {
 	if !utf8.Valid(pcm) || !strings.HasPrefix(string(pcm), debugTranscriptPrefix) {
 		return nil
 	}
-	text := strings.TrimSpace(strings.TrimPrefix(string(pcm), debugTranscriptPrefix))
+	_, _ = s.audio.Write(pcm)
+	return nil
+}
+
+func (s *debugASRSession) Finalize(context.Context) error {
+	text := strings.TrimSpace(strings.TrimPrefix(s.audio.String(), debugTranscriptPrefix))
 	if text == "" {
 		return errors.New("debug transcript is empty")
 	}
-	s.events <- ASREvent{Kind: ASREventStarted}
 	select {
 	case s.events <- ASREvent{Kind: ASREventFinal, Text: text}:
 	default:

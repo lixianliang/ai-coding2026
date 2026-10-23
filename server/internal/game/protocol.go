@@ -9,7 +9,7 @@ import (
 const (
 	RoomMin           = 1
 	RoomMax           = 3
-	MaxPlayersPerRoom = 6
+	MaxPlayersPerRoom = 1
 
 	AudioSampleRate    = 16000
 	AudioChannels      = 1
@@ -18,9 +18,10 @@ const (
 	websocketTransport = "websocket"
 	audioFormatOpus    = "opus"
 
-	messageTypeHello = "hello"
-	messageTypeError = "error"
-	messageTypeTTS   = "tts"
+	messageTypeHello  = "hello"
+	messageTypeError  = "error"
+	messageTypeListen = "listen"
+	messageTypeTTS    = "tts"
 
 	messageStateStart         = "start"
 	messageStateStop          = "stop"

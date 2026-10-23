@@ -20,8 +20,8 @@ import (
 const (
 	qwenRealtimeEventSessionUpdate     = "session.update"
 	qwenRealtimeEventAudioAppend       = "input_audio_buffer.append"
+	qwenRealtimeEventAudioCommit       = "input_audio_buffer.commit"
 	qwenRealtimeEventSessionUpdated    = "session.updated"
-	qwenRealtimeEventSpeechStarted     = "input_audio_buffer.speech_started"
 	qwenRealtimeEventTranscriptionText = "conversation.item.input_audio_transcription.text"
 	qwenRealtimeEventTranscriptionDone = "conversation.item.input_audio_transcription.completed"
 	qwenRealtimeEventTranscriptionFail = "conversation.item.input_audio_transcription.failed"
@@ -88,7 +88,6 @@ func (a *QwenASR) Open(ctx context.Context, deviceID string) (ASRSession, error)
 		Session: &qwenSessionConfig{
 			InputAudioFormat: "pcm",
 			SampleRate:       AudioSampleRate,
-			TurnDetection:    qwenTurnDetection{Type: "server_vad"},
 		},
 	}
 	if a.language != "" {
@@ -162,6 +161,21 @@ func (s *qwenASRSession) Push(ctx context.Context, pcm []byte) error {
 	return s.writeJSON(request)
 }
 
+func (s *qwenASRSession) Finalize(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	if s.closed.Load() {
+		return errors.New("qwen ASR session is closed")
+	}
+	return s.writeJSON(qwenClientEvent{
+		EventID: s.nextEventID(),
+		Type:    qwenRealtimeEventAudioCommit,
+	})
+}
+
 func (s *qwenASRSession) Events() <-chan ASREvent {
 	return s.events
 }
@@ -204,8 +218,6 @@ func (s *qwenASRSession) readLoop() {
 			continue
 		}
 		switch event.Type {
-		case qwenRealtimeEventSpeechStarted:
-			s.emit(ASREvent{Kind: ASREventStarted})
 		case qwenRealtimeEventTranscriptionText:
 			if text := strings.TrimSpace(event.Text + event.Stash); text != "" {
 				s.emit(ASREvent{Kind: ASREventPartial, Text: text})
@@ -277,15 +289,11 @@ type qwenSessionConfig struct {
 	InputAudioFormat        string                   `json:"input_audio_format"`
 	SampleRate              int                      `json:"sample_rate"`
 	InputAudioTranscription *qwenTranscriptionConfig `json:"input_audio_transcription,omitempty"`
-	TurnDetection           qwenTurnDetection        `json:"turn_detection"`
+	TurnDetection           any                      `json:"turn_detection"`
 }
 
 type qwenTranscriptionConfig struct {
 	Language string `json:"language"`
-}
-
-type qwenTurnDetection struct {
-	Type string `json:"type"`
 }
 
 type qwenServerEvent struct {

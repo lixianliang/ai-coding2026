@@ -99,7 +99,11 @@ class YunliaoS3 : public DualNetworkBoard {
         boot_button_.OnClick([this]() {
             power_save_timer_->WakeUp();
             auto& app = Application::GetInstance();
-            app.ToggleChatState();
+            if (app.GetDeviceState() == kDeviceStateListening) {
+                app.StopListening();
+            } else if (app.GetDeviceState() == kDeviceStateIdle) {
+                app.StartListening();
+            }
         });
         boot_button_.OnDoubleClick([this]() {
             ESP_LOGI(TAG, "Button OnDoubleClick");

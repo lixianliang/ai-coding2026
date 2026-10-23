@@ -8,8 +8,7 @@ import (
 )
 
 const (
-	pipelineChunkBytes        = AudioSampleRate * AudioFrameDuration / 1000 * pcmSampleBytes
-	pipelineTrailingSilenceMS = 2000
+	pipelineChunkBytes = AudioSampleRate * AudioFrameDuration / 1000 * pcmSampleBytes
 )
 
 var TurtleSoupDemo = Question{
@@ -70,13 +69,14 @@ func (p *Pipeline) Transcribe(ctx context.Context, pcm []byte) (string, error) {
 	}
 	defer session.Close()
 
-	audio := make([]byte, len(pcm)+AudioSampleRate*pcmSampleBytes*pipelineTrailingSilenceMS/1000)
-	copy(audio, pcm)
-	for offset := 0; offset < len(audio); offset += pipelineChunkBytes {
-		end := min(offset+pipelineChunkBytes, len(audio))
-		if err := session.Push(ctx, audio[offset:end]); err != nil {
+	for offset := 0; offset < len(pcm); offset += pipelineChunkBytes {
+		end := min(offset+pipelineChunkBytes, len(pcm))
+		if err := session.Push(ctx, pcm[offset:end]); err != nil {
 			return "", fmt.Errorf("push ASR audio: %w", err)
 		}
+	}
+	if err := session.Finalize(ctx); err != nil {
+		return "", fmt.Errorf("finalize ASR audio: %w", err)
 	}
 	for {
 		select {

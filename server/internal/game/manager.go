@@ -162,8 +162,6 @@ type client struct {
 	closeOnce sync.Once
 	asr       ASRSession
 	logger    *slog.Logger
-	eligible  bool
-	muted     bool
 }
 
 func (c *client) readLoop(room *room) error {
@@ -179,8 +177,21 @@ func (c *client) readLoop(room *room) error {
 				c.sendMessage(Message{Type: messageTypeError, Message: "invalid JSON message"})
 				continue
 			}
-			// listen start/stop only describes device microphone state. Qwen VAD
-			// drives room turns, so no server-side state change is needed.
+			if message.Type != messageTypeListen {
+				continue
+			}
+			var kind commandKind
+			switch message.State {
+			case messageStateStart:
+				kind = commandListenStart
+			case messageStateStop:
+				kind = commandListenStop
+			default:
+				continue
+			}
+			if !room.submit(roomCommand{kind: kind, client: c}) {
+				return errors.New("room is closed")
+			}
 		case websocket.BinaryMessage:
 			payload, err := ParseAudioPacket(c.version, data)
 			if err != nil {
@@ -192,11 +203,7 @@ func (c *client) readLoop(room *room) error {
 				c.logger.Warn("decode device audio", "error", err)
 				continue
 			}
-			if err := c.asr.Push(context.Background(), pcm); err != nil {
-				c.logger.Warn("push audio to ASR", "error", err)
-				continue
-			}
-			if !room.submit(roomCommand{kind: commandAudio, client: c, audio: payload}) {
+			if !room.submit(roomCommand{kind: commandAudio, client: c, audio: pcm}) {
 				return errors.New("room is closed")
 			}
 		}
@@ -221,12 +228,24 @@ func (c *client) writeLoop() {
 				return
 			}
 		case <-c.done:
-			err := c.conn.WriteControl(websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
-			if err != nil {
-				c.logger.Debug("write websocket close", "error", err)
+			for {
+				select {
+				case frame := <-c.out:
+					if err := c.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+						return
+					}
+					if err := c.conn.WriteMessage(frame.messageType, frame.data); err != nil {
+						return
+					}
+				default:
+					err := c.conn.WriteControl(websocket.CloseMessage,
+						websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
+					if err != nil {
+						c.logger.Debug("write websocket close", "error", err)
+					}
+					return
+				}
 			}
-			return
 		}
 	}
 }
@@ -279,7 +298,7 @@ const (
 	phaseIdle roomPhase = iota
 	phaseHosting
 	phaseAwaitingQuestion
-	phaseSpeaking
+	phaseListening
 	phaseJudging
 	phaseFinished
 )
@@ -297,6 +316,8 @@ const (
 	commandJoin commandKind = iota
 	commandLeave
 	commandAudio
+	commandListenStart
+	commandListenStop
 	commandASR
 	commandSpeechDone
 	commandJudgeDone
@@ -330,9 +351,8 @@ type room struct {
 	stopped   chan struct{}
 	closeOnce sync.Once
 
-	players map[string]*client
-	order   []*client
-	active  *client
+	client *client
+	active *client
 
 	phase        roomPhase
 	current      *activeGame
@@ -344,6 +364,8 @@ type room struct {
 	timeExpired  bool
 	speechAction speechAction
 	speechWinner string
+	discussion   bool
+	capturing    bool
 	gameTimer    *time.Timer
 	turnTimer    *time.Timer
 }
@@ -355,8 +377,6 @@ func newRoom(id int, deps Deps) *room {
 		commands: make(chan roomCommand, commandQueueSize),
 		done:     make(chan struct{}),
 		stopped:  make(chan struct{}),
-		players:  make(map[string]*client, MaxPlayersPerRoom),
-		order:    make([]*client, 0, MaxPlayersPerRoom),
 	}
 	go r.run()
 	return r
@@ -382,8 +402,8 @@ func (r *room) run() {
 	for {
 		select {
 		case <-r.done:
-			for _, client := range r.order {
-				client.close()
+			if r.client != nil {
+				r.client.close()
 			}
 			return
 		case command := <-r.commands:
@@ -394,6 +414,10 @@ func (r *room) run() {
 				r.handleLeave(command.client)
 			case commandAudio:
 				r.handleAudio(command.client, command.audio)
+			case commandListenStart:
+				r.handleListenStart(command.client)
+			case commandListenStop:
+				r.handleListenStop(command.client)
 			case commandASR:
 				r.handleASREvent(command.client, command.asrEvent)
 			case commandSpeechDone:
@@ -411,123 +435,122 @@ func (r *room) run() {
 
 func (r *room) handleJoin(command roomCommand) {
 	client := command.client
-	if _, exists := r.players[client.deviceID]; exists {
-		command.ack <- errors.New("device already joined")
-		return
-	}
-	if len(r.players) >= MaxPlayersPerRoom {
+	if r.client != nil {
 		command.ack <- errors.New("room is full")
 		return
 	}
-	r.players[client.deviceID] = client
-	r.order = append(r.order, client)
-	if r.phase == phaseIdle {
-		client.eligible = true
-		if err := r.startGame(); err != nil {
-			r.removeClient(client)
-			command.ack <- err
-			return
-		}
-	} else {
-		client.eligible = false
-		r.mute(client)
+	r.client = client
+	if err := r.startGame(); err != nil {
+		r.client = nil
+		command.ack <- err
+		return
 	}
 	command.ack <- nil
 }
 
 func (r *room) handleLeave(client *client) {
-	if _, exists := r.players[client.deviceID]; !exists {
+	if r.client != client {
 		return
 	}
-	r.removeClient(client)
-	if len(r.order) == 0 {
-		r.stopTimers()
-		if r.current != nil {
-			if err := r.deps.Store.EndGame(context.Background(), r.current.recordID, ""); err != nil {
-				r.deps.Logger.Error("end abandoned game", "room_id", r.id, "error", err)
-			}
+	r.stopTimers()
+	if r.current != nil {
+		if err := r.deps.Store.EndGame(context.Background(), r.current.recordID, ""); err != nil {
+			r.deps.Logger.Error("end abandoned game", "room_id", r.id, "error", err)
 		}
-		r.current = nil
-		r.active = nil
-		r.phase = phaseIdle
+	}
+	r.client = nil
+	r.active = nil
+	r.current = nil
+	r.discussion = false
+	r.capturing = false
+	r.phase = phaseIdle
+}
+
+func (r *room) handleListenStart(client *client) {
+	if r.client != client || r.active != nil || (r.phase != phaseAwaitingQuestion && r.phase != phaseFinished) {
 		return
 	}
-	if r.active == client {
-		r.releaseFloor()
-		if r.phase == phaseSpeaking {
-			r.phase = phaseAwaitingQuestion
+	r.discussion = r.phase == phaseFinished
+	r.phase = phaseListening
+	r.active = client
+	r.capturing = true
+	r.partial = ""
+	r.turnSeq++
+	turnSeq := r.turnSeq
+	r.turnTimer = time.AfterFunc(r.deps.TurnDuration, func() {
+		r.submit(roomCommand{kind: commandTurnTimeout, seq: turnSeq})
+	})
+}
+
+func (r *room) handleListenStop(client *client) {
+	if r.phase != phaseListening || r.active != client || !r.capturing {
+		return
+	}
+	r.finishCapture(client)
+}
+
+func (r *room) finishCapture(client *client) {
+	r.stopTurnTimer()
+	r.capturing = false
+	if err := client.asr.Finalize(context.Background()); err != nil {
+		r.deps.Logger.Warn("finalize ASR audio", "room_id", r.id, "error", err)
+		if r.timeExpired {
+			r.speakTimeoutAnswer()
+		} else {
+			r.returnToIdle()
 		}
 	}
 }
 
-func (r *room) removeClient(client *client) {
-	delete(r.players, client.deviceID)
-	filtered := r.order[:0]
-	for _, item := range r.order {
-		if item != client {
-			filtered = append(filtered, item)
-		}
+func (r *room) returnToIdle() {
+	r.stopTurnTimer()
+	r.capturing = false
+	r.active = nil
+	r.partial = ""
+	if r.discussion {
+		r.discussion = false
+		r.phase = phaseFinished
+	} else {
+		r.phase = phaseAwaitingQuestion
 	}
-	r.order = filtered
 }
 
-func (r *room) handleAudio(client *client, payload []byte) {
-	if (r.phase != phaseSpeaking && r.phase != phaseFinished) || r.active != client {
+func (r *room) handleAudio(client *client, pcm []byte) {
+	if r.phase != phaseListening || r.active != client || !r.capturing {
 		return
 	}
-	for _, other := range r.order {
-		if other != client {
-			other.sendAudio(payload)
-		}
+	if err := client.asr.Push(context.Background(), pcm); err != nil {
+		r.deps.Logger.Warn("push audio to ASR", "room_id", r.id, "error", err)
 	}
 }
 
 func (r *room) handleASREvent(client *client, event ASREvent) {
 	switch event.Kind {
-	case ASREventStarted:
-		if (r.phase != phaseAwaitingQuestion && r.phase != phaseFinished) || !client.eligible || r.active != nil || r.timeExpired {
-			return
-		}
-		if r.phase == phaseAwaitingQuestion {
-			r.phase = phaseSpeaking
-		}
-		r.active = client
-		r.partial = ""
-		r.turnSeq++
-		turnSeq := r.turnSeq
-		for _, other := range r.order {
-			if other != client && other.eligible {
-				r.mute(other)
-			}
-		}
-		r.turnTimer = time.AfterFunc(r.deps.TurnDuration, func() {
-			r.submit(roomCommand{kind: commandTurnTimeout, seq: turnSeq})
-		})
 	case ASREventPartial:
-		if (r.phase == phaseSpeaking || r.phase == phaseFinished) && r.active == client {
+		if r.phase == phaseListening && r.active == client {
 			r.partial = event.Text
 		}
 	case ASREventFinal:
-		if (r.phase != phaseSpeaking && r.phase != phaseFinished) || r.active != client {
+		if r.phase != phaseListening || r.active != client || r.capturing {
 			return
 		}
+		r.stopTurnTimer()
+		r.active = nil
 		if isExitPhrase(event.Text) {
 			client.close()
 			r.handleLeave(client)
 			return
 		}
-		if r.phase == phaseFinished {
+		if r.discussion {
+			r.discussion = false
+			r.phase = phaseFinished
 			if isContinuePhrase(event.Text) {
-				r.stopTurnTimer()
-				r.active = nil
 				r.partial = ""
 				if err := r.startGame(); err != nil {
 					r.deps.Logger.Error("start next game", "room_id", r.id, "error", err)
-					r.unmuteEligible()
 				}
 				return
 			}
-			r.releaseFloor()
 			return
 		}
 		r.finishTurn(client, event.Text)
@@ -583,18 +606,10 @@ func (r *room) handleJudgeDone(command roomCommand) {
 }
 
 func (r *room) handleTurnTimeout(seq uint64) {
-	if seq != r.turnSeq || r.active == nil {
+	if seq != r.turnSeq || r.phase != phaseListening || r.active == nil || !r.capturing {
 		return
 	}
-	if r.phase == phaseFinished {
-		r.releaseFloor()
-		return
-	}
-	if r.phase != phaseSpeaking {
-		return
-	}
-	client := r.active
-	r.finishTurn(client, r.partial)
+	r.finishCapture(r.active)
 }
 
 func (r *room) handleGameTimeout(seq uint64) {
@@ -603,8 +618,12 @@ func (r *room) handleGameTimeout(seq uint64) {
 	}
 	r.timeExpired = true
 	switch r.phase {
-	case phaseAwaitingQuestion, phaseSpeaking:
+	case phaseAwaitingQuestion:
 		r.speakTimeoutAnswer()
+	case phaseListening:
+		if r.capturing {
+			r.finishCapture(r.active)
+		}
 	}
 }
 
@@ -626,9 +645,8 @@ func (r *room) startGame() error {
 	r.timeExpired = false
 	r.partial = ""
 	r.active = nil
-	for _, client := range r.order {
-		client.eligible = true
-	}
+	r.discussion = false
+	r.capturing = false
 	gameSeq := r.gameSeq
 	r.gameTimer = time.AfterFunc(r.deps.GameDuration, func() {
 		r.submit(roomCommand{kind: commandGameTimeout, seq: gameSeq})
@@ -641,14 +659,16 @@ func (r *room) beginSpeech(text string, action speechAction, winner string) {
 	if r.current == nil {
 		return
 	}
+	client := r.client
 	r.phase = phaseHosting
+	r.active = nil
+	r.capturing = false
+	r.stopTurnTimer()
 	r.speechSeq++
 	r.speechAction = action
 	r.speechWinner = winner
-	for _, client := range r.order {
-		r.mute(client)
-	}
-	for _, client := range r.order {
+	if client != nil {
+		client.sendMessage(Message{Type: messageTypeTTS, State: messageStateStart})
 		client.sendMessage(Message{Type: messageTypeTTS, State: messageStateSentenceStart, Text: text})
 	}
 	seq := r.speechSeq
@@ -662,13 +682,14 @@ func (r *room) beginSpeech(text string, action speechAction, winner string) {
 			packets, err := r.deps.Codec.EncodePCM(pcm)
 			if err != nil {
 				r.deps.Logger.Warn("encode host speech", "room_id", r.id, "error", err)
-			} else {
-				for _, client := range r.order {
-					for _, packet := range packets {
-						client.sendAudio(packet)
-					}
+			} else if client != nil {
+				for _, packet := range packets {
+					client.sendAudio(packet)
 				}
 			}
+		}
+		if client != nil {
+			client.sendMessage(Message{Type: messageTypeTTS, State: messageStateStop})
 		}
 		r.submit(roomCommand{kind: commandSpeechDone, seq: seq})
 	}()
@@ -678,7 +699,6 @@ func (r *room) handleSpeechDone(seq uint64) {
 	if seq != r.speechSeq || r.phase != phaseHosting {
 		return
 	}
-	r.unmuteEligible()
 	if r.speechAction == actionFinishGame {
 		r.finishGame()
 		return
@@ -708,33 +728,9 @@ func (r *room) finishGame() {
 	r.current = nil
 	r.active = nil
 	r.partial = ""
+	r.discussion = false
 	r.timeExpired = false
 	r.phase = phaseFinished
-}
-
-func (r *room) mute(client *client) {
-	if client.muted {
-		return
-	}
-	client.muted = true
-	client.sendMessage(Message{Type: messageTypeTTS, State: messageStateStart})
-}
-
-func (r *room) unmuteEligible() {
-	for _, client := range r.order {
-		if !client.eligible || !client.muted {
-			continue
-		}
-		client.muted = false
-		client.sendMessage(Message{Type: messageTypeTTS, State: messageStateStop})
-	}
-}
-
-func (r *room) releaseFloor() {
-	r.stopTurnTimer()
-	r.active = nil
-	r.partial = ""
-	r.unmuteEligible()
 }
 
 func (r *room) stopTurnTimer() {
