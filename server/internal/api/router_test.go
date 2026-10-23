@@ -158,7 +158,7 @@ func TestAudioBeforeListenStartIsIgnored(t *testing.T) {
 	require.Equal(t, "不是。", readSpeech(t, conn))
 }
 
-func TestCorrectAnswerSpeaksSoupAndWaitsForContinue(t *testing.T) {
+func TestCompleteGameLifecycle(t *testing.T) {
 	judge := &testJudge{}
 	manager, _, asr := newTestManager(t, judge, time.Second, time.Minute)
 	server := httptest.NewServer(NewRouter(manager, nil, "secret", testLogger()))
@@ -191,6 +191,16 @@ func TestCorrectAnswerSpeaksSoupAndWaitsForContinue(t *testing.T) {
 	next := readSpeech(t, conn)
 	require.NotContains(t, next, "猜对了。汤底是：")
 	require.Equal(t, int32(1), judge.calls.Load())
+
+	writeListen(t, conn, "start")
+	writeAudio(t, conn, "退出游戏")
+	writeListen(t, conn, "stop")
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
+	_, _, err := conn.ReadMessage()
+	require.Error(t, err)
+
+	nextDevice := dialDevice(t, server.URL, "device-2", 1, game.ProtocolVersion1)
+	readSpeech(t, nextDevice)
 }
 
 func TestSecondDeviceIsRejected(t *testing.T) {
