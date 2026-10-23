@@ -14,7 +14,6 @@ func TestSpeakerLeaveUnmutesEligiblePlayers(t *testing.T) {
 	room := &room{
 		players: map[string]*client{"speaker": speaker, "listener": listener, "late": lateJoiner},
 		order:   []*client{speaker, listener, lateJoiner},
-		speaker: speaker,
 		active:  speaker,
 		phase:   phaseSpeaking,
 	}

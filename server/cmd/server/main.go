@@ -14,17 +14,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lixianliang/ai-coding2026/server/internal/api"
+	"github.com/lixianliang/ai-coding2026/server/internal/config"
 	"github.com/lixianliang/ai-coding2026/server/internal/game"
 )
 
 const (
-	envAddress = "GAME_ADDR"
-	envDBPath  = "GAME_DB"
-	envToken   = "GAME_TOKEN"
-
-	defaultAddress = ":8080"
-	defaultDBPath  = "data/game.db"
-	shutdownGrace  = 10 * time.Second
+	envConfig     = "GAME_CONFIG"
+	defaultConfig = "config.local.json"
+	shutdownGrace = 10 * time.Second
 )
 
 func main() {
@@ -38,13 +35,17 @@ func main() {
 }
 
 func run(logger *slog.Logger) error {
-	dbPath := envOrDefault(envDBPath, defaultDBPath)
-	if dbPath != ":memory:" {
-		if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
+	configPath := envOrDefault(envConfig, defaultConfig)
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	if cfg.Database != ":memory:" {
+		if err := os.MkdirAll(filepath.Dir(cfg.Database), 0o750); err != nil {
 			return err
 		}
 	}
-	store, err := game.OpenStore(dbPath)
+	store, err := game.OpenStore(cfg.Database)
 	if err != nil {
 		return err
 	}
@@ -62,28 +63,44 @@ func run(logger *slog.Logger) error {
 			logger.Error("close audio codec", "error", err)
 		}
 	}()
+	asr, err := game.NewQwenASR(cfg.ASR.APIKey, cfg.ASR.URL, cfg.ASR.Model, cfg.ASR.Language)
+	if err != nil {
+		return err
+	}
+	judge, err := game.NewDeepSeekJudge(cfg.LLM.APIKey, cfg.LLM.BaseURL, cfg.LLM.Model, cfg.LLM.MaxTokens, cfg.LLM.Temperature)
+	if err != nil {
+		return err
+	}
+	tts, err := game.NewMiniMaxTTS(cfg.TTS.APIKey, cfg.TTS.URL, cfg.TTS.Model, cfg.TTS.VoiceID, cfg.TTS.GroupID, cfg.TTS.Speed, cfg.TTS.Volume, cfg.TTS.Pitch)
+	if err != nil {
+		return err
+	}
+	pipeline, err := game.NewPipeline(asr, judge, tts)
+	if err != nil {
+		return err
+	}
 	manager, err := game.NewManager(game.Deps{
-		Store:  store,
-		ASR:    game.DebugASR{},
-		TTS:    game.SilenceTTS{},
-		Judge:  game.RuleJudge{},
-		Codec:  codec,
-		Logger: logger,
+		Store:        store,
+		ASR:          asr,
+		TTS:          tts,
+		Judge:        judge,
+		Codec:        codec,
+		Logger:       logger,
+		TurnDuration: time.Duration(cfg.TurnDurationSeconds) * time.Second,
+		GameDuration: time.Duration(cfg.GameDurationSeconds) * time.Second,
 	})
 	if err != nil {
 		return err
 	}
 	defer manager.Close()
-	token := strings.TrimSpace(os.Getenv(envToken))
-	if token == "" {
-		logger.Warn("GAME_TOKEN is empty; websocket authentication is disabled")
+	if strings.TrimSpace(cfg.DeviceToken) == "" {
+		logger.Warn("device_token is empty; websocket authentication is disabled")
 	}
-	router := api.NewRouter(manager, token, logger)
-	address := envOrDefault(envAddress, defaultAddress)
-	server := &http.Server{Addr: address, Handler: router, ReadHeaderTimeout: 5 * time.Second}
+	router := api.NewRouter(manager, pipeline, cfg.DeviceToken, logger)
+	server := &http.Server{Addr: cfg.Address, Handler: router, ReadHeaderTimeout: 5 * time.Second}
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("game server listening", "address", address)
+		logger.Info("game server listening", "address", cfg.Address)
 		errCh <- server.ListenAndServe()
 	}()
 	signals := make(chan os.Signal, 1)

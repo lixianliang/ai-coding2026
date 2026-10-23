@@ -21,7 +21,7 @@ const (
 	websocketReadLimit = 1 << 20
 	outboundQueueSize  = 256
 	commandQueueSize   = 256
-	externalTimeout    = 8 * time.Second
+	externalTimeout    = 20 * time.Second
 )
 
 var exitPhrases = []string{"退出游戏", "退出房间", "不玩了"}
@@ -182,7 +182,12 @@ func (c *client) readLoop(room *room) error {
 				c.sendMessage(Message{Type: messageTypeError, Message: "invalid audio packet"})
 				continue
 			}
-			if err := c.asr.Push(context.Background(), payload); err != nil {
+			pcm, err := room.deps.Codec.DecodeOpus(payload)
+			if err != nil {
+				c.logger.Warn("decode device audio", "error", err)
+				continue
+			}
+			if err := c.asr.Push(context.Background(), pcm); err != nil {
 				c.logger.Warn("push audio to ASR", "error", err)
 				continue
 			}
@@ -321,7 +326,6 @@ type room struct {
 
 	players map[string]*client
 	order   []*client
-	speaker *client
 	active  *client
 
 	phase        roomPhase
@@ -411,9 +415,6 @@ func (r *room) handleJoin(command roomCommand) {
 	}
 	r.players[client.deviceID] = client
 	r.order = append(r.order, client)
-	if r.speaker == nil {
-		r.speaker = client
-	}
 	if r.current == nil {
 		client.eligible = true
 		if err := r.startGame(); err != nil {
@@ -442,7 +443,6 @@ func (r *room) handleLeave(client *client) {
 		}
 		r.current = nil
 		r.active = nil
-		r.speaker = nil
 		r.phase = phaseIdle
 		return
 	}
@@ -465,19 +465,17 @@ func (r *room) removeClient(client *client) {
 		}
 	}
 	r.order = filtered
-	if r.speaker == client {
-		r.speaker = nil
-		if len(r.order) > 0 {
-			r.speaker = r.order[0]
-		}
-	}
 }
 
 func (r *room) handleAudio(client *client, payload []byte) {
-	if r.phase != phaseSpeaking || r.active != client || r.speaker == nil || r.speaker == client {
+	if r.phase != phaseSpeaking || r.active != client {
 		return
 	}
-	r.speaker.sendAudio(payload)
+	for _, other := range r.order {
+		if other != client {
+			other.sendAudio(payload)
+		}
+	}
 }
 
 func (r *room) handleASREvent(client *client, event ASREvent) {
@@ -613,14 +611,13 @@ func (r *room) startGame() error {
 }
 
 func (r *room) beginSpeech(text string, action speechAction, winner string) {
-	if r.current == nil || r.speaker == nil {
+	if r.current == nil {
 		return
 	}
 	r.phase = phaseHosting
 	r.speechSeq++
 	r.speechAction = action
 	r.speechWinner = winner
-	speaker := r.speaker
 	for _, client := range r.order {
 		r.mute(client)
 	}
@@ -639,8 +636,10 @@ func (r *room) beginSpeech(text string, action speechAction, winner string) {
 			if err != nil {
 				r.deps.Logger.Warn("encode host speech", "room_id", r.id, "error", err)
 			} else {
-				for _, packet := range packets {
-					speaker.sendAudio(packet)
+				for _, client := range r.order {
+					for _, packet := range packets {
+						client.sendAudio(packet)
+					}
 				}
 			}
 		}

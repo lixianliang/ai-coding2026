@@ -77,7 +77,7 @@ func (passthroughCodec) Close() error                              { return nil 
 
 func TestHealthAndAuthResponses(t *testing.T) {
 	manager, _ := newTestManager(t, &testJudge{})
-	router := NewRouter(manager, "secret", testLogger())
+	router := NewRouter(manager, nil, "secret", testLogger())
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 
@@ -97,7 +97,7 @@ func TestHealthAndAuthResponses(t *testing.T) {
 func TestRoomClaimsOneSpeakerAndStartsNextGame(t *testing.T) {
 	judge := &testJudge{}
 	manager, _ := newTestManager(t, judge)
-	router := NewRouter(manager, "secret", testLogger())
+	router := NewRouter(manager, nil, "secret", testLogger())
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 

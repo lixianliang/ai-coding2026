@@ -1,14 +1,19 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	_ "embed"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -25,11 +30,18 @@ const (
 	queryRoomID           = "room_id"
 	routeHealth           = "/healthz"
 	routeGame             = "/v1/game"
+	routePlayground       = "/playground"
+	routePlaygroundTurn   = "/v1/playground/turn"
 	successCode           = 0
 	badRequestCode        = 40000
 	unauthorizedCode      = 40100
 	serverErrorCode       = 50000
+	playgroundAudioLimit  = 10 << 20
+	playgroundTurnTimeout = 90 * time.Second
 )
+
+//go:embed playground.html
+var playgroundHTML []byte
 
 type response struct {
 	Code    int    `json:"code"`
@@ -40,19 +52,21 @@ type response struct {
 
 type Handler struct {
 	manager  *game.Manager
+	pipeline *game.Pipeline
 	token    string
 	logger   *slog.Logger
 	upgrader websocket.Upgrader
 }
 
-func NewRouter(manager *game.Manager, token string, logger *slog.Logger) *gin.Engine {
+func NewRouter(manager *game.Manager, pipeline *game.Pipeline, token string, logger *slog.Logger) *gin.Engine {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	handler := &Handler{
-		manager: manager,
-		token:   token,
-		logger:  logger,
+		manager:  manager,
+		pipeline: pipeline,
+		token:    token,
+		logger:   logger,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -67,6 +81,8 @@ func NewRouter(manager *game.Manager, token string, logger *slog.Logger) *gin.En
 	}))
 	router.GET(routeHealth, handler.health)
 	router.GET(routeGame, handler.gameWebSocket)
+	router.GET(routePlayground, handler.playground)
+	router.POST(routePlaygroundTurn, handler.playgroundTurn)
 	return router
 }
 
@@ -111,6 +127,52 @@ func (h *Handler) gameWebSocket(c *gin.Context) {
 	if err := h.manager.Serve(c.Request.Context(), conn, roomID, deviceID, version); err != nil {
 		h.logger.Debug("game websocket ended", "error", err, "room_id", roomID, "device_id", deviceID)
 	}
+}
+
+func (h *Handler) playground(c *gin.Context) {
+	c.Data(http.StatusOK, "text/html; charset=utf-8", playgroundHTML)
+}
+
+func (h *Handler) playgroundTurn(c *gin.Context) {
+	if !h.authorized(c.GetHeader(headerAuthorization)) {
+		c.JSON(http.StatusOK, response{Code: unauthorizedCode, Message: "unauthorized", ReqID: requestID(c), Data: nil})
+		return
+	}
+	if h.pipeline == nil {
+		c.JSON(http.StatusOK, response{Code: serverErrorCode, Message: "playground is not configured", ReqID: requestID(c), Data: nil})
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, playgroundAudioLimit)
+	pcm, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		h.badRequest(c, "PCM body is too large")
+		return
+	}
+	if len(pcm) == 0 {
+		h.badRequest(c, "PCM body is required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), playgroundTurnTimeout)
+	defer cancel()
+	turn, err := h.pipeline.Turn(ctx, pcm, game.TurtleSoupDemo.Surface, game.TurtleSoupDemo.Answer)
+	if err != nil {
+		h.logger.Warn("playground turn failed", "error", err)
+		c.JSON(http.StatusOK, response{Code: serverErrorCode, Message: "game turn failed", ReqID: requestID(c), Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, response{
+		Code: successCode, Message: "ok", ReqID: requestID(c),
+		Data: map[string]any{
+			"surface":          game.TurtleSoupDemo.Surface,
+			"transcript":       turn.Transcript,
+			"verdict":          turn.Verdict,
+			"speech":           turn.Speech,
+			"audio_pcm_base64": base64.StdEncoding.EncodeToString(turn.PCM),
+			"sample_rate":      game.AudioSampleRate,
+			"channels":         game.AudioChannels,
+			"bits_per_sample":  16,
+		},
+	})
 }
 
 func (h *Handler) authorized(header string) bool {
