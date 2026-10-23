@@ -24,7 +24,12 @@ const (
 	externalTimeout    = 20 * time.Second
 )
 
-var exitPhrases = []string{"退出游戏", "退出房间", "不玩了"}
+var (
+	exitPhrases     = []string{"退出游戏", "退出房间", "不玩了"}
+	continuePhrases = []string{"游戏继续", "继续游戏", "再来一局", "下一局", "继续玩"}
+)
+
+const finishedPrompt = "大家可以讨论，想开新一局请说“游戏继续”。"
 
 type Deps struct {
 	Store        *Store
@@ -276,6 +281,7 @@ const (
 	phaseAwaitingQuestion
 	phaseSpeaking
 	phaseJudging
+	phaseFinished
 )
 
 type speechAction uint8
@@ -415,7 +421,7 @@ func (r *room) handleJoin(command roomCommand) {
 	}
 	r.players[client.deviceID] = client
 	r.order = append(r.order, client)
-	if r.current == nil {
+	if r.phase == phaseIdle {
 		client.eligible = true
 		if err := r.startGame(); err != nil {
 			r.removeClient(client)
@@ -447,11 +453,9 @@ func (r *room) handleLeave(client *client) {
 		return
 	}
 	if r.active == client {
-		r.active = nil
-		r.stopTurnTimer()
+		r.releaseFloor()
 		if r.phase == phaseSpeaking {
 			r.phase = phaseAwaitingQuestion
-			r.unmuteEligible()
 		}
 	}
 }
@@ -468,7 +472,7 @@ func (r *room) removeClient(client *client) {
 }
 
 func (r *room) handleAudio(client *client, payload []byte) {
-	if r.phase != phaseSpeaking || r.active != client {
+	if (r.phase != phaseSpeaking && r.phase != phaseFinished) || r.active != client {
 		return
 	}
 	for _, other := range r.order {
@@ -481,10 +485,12 @@ func (r *room) handleAudio(client *client, payload []byte) {
 func (r *room) handleASREvent(client *client, event ASREvent) {
 	switch event.Kind {
 	case ASREventStarted:
-		if r.phase != phaseAwaitingQuestion || !client.eligible || r.active != nil || r.timeExpired {
+		if (r.phase != phaseAwaitingQuestion && r.phase != phaseFinished) || !client.eligible || r.active != nil || r.timeExpired {
 			return
 		}
-		r.phase = phaseSpeaking
+		if r.phase == phaseAwaitingQuestion {
+			r.phase = phaseSpeaking
+		}
 		r.active = client
 		r.partial = ""
 		r.turnSeq++
@@ -498,16 +504,30 @@ func (r *room) handleASREvent(client *client, event ASREvent) {
 			r.submit(roomCommand{kind: commandTurnTimeout, seq: turnSeq})
 		})
 	case ASREventPartial:
-		if r.phase == phaseSpeaking && r.active == client {
+		if (r.phase == phaseSpeaking || r.phase == phaseFinished) && r.active == client {
 			r.partial = event.Text
 		}
 	case ASREventFinal:
-		if r.phase != phaseSpeaking || r.active != client {
+		if (r.phase != phaseSpeaking && r.phase != phaseFinished) || r.active != client {
 			return
 		}
 		if isExitPhrase(event.Text) {
 			client.close()
 			r.handleLeave(client)
+			return
+		}
+		if r.phase == phaseFinished {
+			if isContinuePhrase(event.Text) {
+				r.stopTurnTimer()
+				r.active = nil
+				r.partial = ""
+				if err := r.startGame(); err != nil {
+					r.deps.Logger.Error("start next game", "room_id", r.id, "error", err)
+					r.unmuteEligible()
+				}
+				return
+			}
+			r.releaseFloor()
 			return
 		}
 		r.finishTurn(client, event.Text)
@@ -556,14 +576,21 @@ func (r *room) handleJudgeDone(command roomCommand) {
 		return
 	}
 	if command.verdict == VerdictCorrect {
-		r.beginSpeech("猜对了。汤底是："+r.current.question.Answer, actionFinishGame, command.deviceID)
+		r.beginSpeech("猜对了。汤底是："+r.current.question.Answer+"。"+finishedPrompt, actionFinishGame, command.deviceID)
 		return
 	}
 	r.beginSpeech(VerdictSpeech(command.verdict), actionOpenQuestions, "")
 }
 
 func (r *room) handleTurnTimeout(seq uint64) {
-	if seq != r.turnSeq || r.phase != phaseSpeaking || r.active == nil {
+	if seq != r.turnSeq || r.active == nil {
+		return
+	}
+	if r.phase == phaseFinished {
+		r.releaseFloor()
+		return
+	}
+	if r.phase != phaseSpeaking {
 		return
 	}
 	client := r.active
@@ -667,7 +694,7 @@ func (r *room) speakTimeoutAnswer() {
 	if r.current == nil {
 		return
 	}
-	r.beginSpeech("时间到。本局汤底是："+r.current.question.Answer, actionFinishGame, "")
+	r.beginSpeech("时间到。本局汤底是："+r.current.question.Answer+"。"+finishedPrompt, actionFinishGame, "")
 }
 
 func (r *room) finishGame() {
@@ -682,13 +709,7 @@ func (r *room) finishGame() {
 	r.active = nil
 	r.partial = ""
 	r.timeExpired = false
-	r.phase = phaseIdle
-	if len(r.order) == 0 {
-		return
-	}
-	if err := r.startGame(); err != nil {
-		r.deps.Logger.Error("start next game", "room_id", r.id, "error", err)
-	}
+	r.phase = phaseFinished
 }
 
 func (r *room) mute(client *client) {
@@ -709,6 +730,13 @@ func (r *room) unmuteEligible() {
 	}
 }
 
+func (r *room) releaseFloor() {
+	r.stopTurnTimer()
+	r.active = nil
+	r.partial = ""
+	r.unmuteEligible()
+}
+
 func (r *room) stopTurnTimer() {
 	if r.turnTimer != nil {
 		r.turnTimer.Stop()
@@ -726,6 +754,15 @@ func (r *room) stopTimers() {
 
 func isExitPhrase(text string) bool {
 	for _, phrase := range exitPhrases {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func isContinuePhrase(text string) bool {
+	for _, phrase := range continuePhrases {
 		if strings.Contains(text, phrase) {
 			return true
 		}
