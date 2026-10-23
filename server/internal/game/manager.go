@@ -599,7 +599,7 @@ func (r *room) handleJudgeDone(command roomCommand) {
 		return
 	}
 	if command.verdict == VerdictCorrect {
-		r.beginSpeech("猜对了。汤底是："+r.current.question.Answer+"。"+finishedPrompt, actionFinishGame, command.deviceID)
+		r.beginSpeech("猜对了。汤底是："+formatSpokenAnswer(r.current.question.Answer)+finishedPrompt, actionFinishGame, command.deviceID)
 		return
 	}
 	r.beginSpeech(VerdictSpeech(command.verdict), actionOpenQuestions, "")
@@ -714,7 +714,7 @@ func (r *room) speakTimeoutAnswer() {
 	if r.current == nil {
 		return
 	}
-	r.beginSpeech("时间到。本局汤底是："+r.current.question.Answer+"。"+finishedPrompt, actionFinishGame, "")
+	r.beginSpeech("时间到。本局汤底是："+formatSpokenAnswer(r.current.question.Answer)+finishedPrompt, actionFinishGame, "")
 }
 
 func (r *room) finishGame() {
@@ -746,6 +746,10 @@ func (r *room) stopTimers() {
 		r.gameTimer = nil
 	}
 	r.stopTurnTimer()
+}
+
+func formatSpokenAnswer(answer string) string {
+	return strings.TrimSuffix(answer, "。") + "。"
 }
 
 func isExitPhrase(text string) bool {

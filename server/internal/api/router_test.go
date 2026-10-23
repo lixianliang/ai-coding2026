@@ -173,6 +173,7 @@ func TestCompleteGameLifecycle(t *testing.T) {
 	require.Eventually(t, func() bool { return judge.calls.Load() == 1 }, time.Second, 10*time.Millisecond)
 	speech := readSpeech(t, conn, "final:correct")
 	require.Contains(t, speech, "猜对了。汤底是：")
+	require.NotContains(t, speech, "。。")
 	require.Contains(t, speech, "游戏继续")
 
 	writeListen(t, conn, "start")
