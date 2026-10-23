@@ -20,7 +20,7 @@ type evalCase struct {
 var cases = []evalCase{
 	{name: "yes", utterance: "这碗汤和他妈妈有关吗？", want: game.VerdictYes},
 	{name: "no", utterance: "他是因为汤太烫才哭的吗？", want: game.VerdictNo},
-	{name: "close", utterance: "汤的味道让他想起一位已经去世的家人，对吗？", want: game.VerdictClose},
+	{name: "close", utterance: "他觉得这碗汤的味道很熟悉，但还没想起来这是谁做的。", want: game.VerdictClose},
 	{name: "irrelevant", utterance: "这家餐厅今天几点关门？", want: game.VerdictIrrelevant},
 	{name: "correct", utterance: "他喝出了已故母亲做汤的味道，所以哭了。", want: game.VerdictCorrect},
 }

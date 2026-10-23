@@ -6,6 +6,13 @@ config OTA_URL
     help
         The application will access this URL to check for new firmwares and server address.
 
+config TURTLE_SOUP_GAME_URL
+    string "Turtle soup Game WebSocket URL"
+    default ""
+    help
+        Base WebSocket URL of the Go game service. The device appends ?room_id=N when
+        entering a game. Leave empty to disable the local game entry.
+
 choice
     prompt "Flash Assets"
     default FLASH_DEFAULT_ASSETS if !USE_EMOTE_MESSAGE_STYLE

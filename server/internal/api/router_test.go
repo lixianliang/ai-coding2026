@@ -37,6 +37,7 @@ type scriptedSession struct {
 	mu        sync.Mutex
 	audio     bytes.Buffer
 	closeOnce sync.Once
+	eventsMu  sync.RWMutex
 }
 
 func (s *scriptedSession) Push(_ context.Context, pcm []byte) error {
@@ -55,7 +56,9 @@ func (s *scriptedSession) Finalize(context.Context) error {
 	if text == "" {
 		return errors.New("empty transcript")
 	}
+	s.eventsMu.RLock()
 	s.events <- game.ASREvent{Kind: game.ASREventFinal, Text: text}
+	s.eventsMu.RUnlock()
 	s.finalizes.Add(1)
 	return nil
 }
@@ -63,7 +66,11 @@ func (s *scriptedSession) Finalize(context.Context) error {
 func (s *scriptedSession) Events() <-chan game.ASREvent { return s.events }
 
 func (s *scriptedSession) Close() error {
-	s.closeOnce.Do(func() { close(s.events) })
+	s.closeOnce.Do(func() {
+		s.eventsMu.Lock()
+		close(s.events)
+		s.eventsMu.Unlock()
+	})
 	return nil
 }
 
@@ -151,7 +158,7 @@ func TestAudioBeforeListenStartIsIgnored(t *testing.T) {
 	require.Equal(t, "不是。", readSpeech(t, conn))
 }
 
-func TestCorrectAnswerSpeaksSoupAndWaitsForContinue(t *testing.T) {
+func TestCompleteGameLifecycle(t *testing.T) {
 	judge := &testJudge{}
 	manager, _, asr := newTestManager(t, judge, time.Second, time.Minute)
 	server := httptest.NewServer(NewRouter(manager, nil, "secret", testLogger()))
@@ -184,6 +191,16 @@ func TestCorrectAnswerSpeaksSoupAndWaitsForContinue(t *testing.T) {
 	next := readSpeech(t, conn)
 	require.NotContains(t, next, "猜对了。汤底是：")
 	require.Equal(t, int32(1), judge.calls.Load())
+
+	writeListen(t, conn, "start")
+	writeAudio(t, conn, "退出游戏")
+	writeListen(t, conn, "stop")
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
+	_, _, err := conn.ReadMessage()
+	require.Error(t, err)
+
+	nextDevice := dialDevice(t, server.URL, "device-2", 1, game.ProtocolVersion1)
+	readSpeech(t, nextDevice)
 }
 
 func TestSecondDeviceIsRejected(t *testing.T) {

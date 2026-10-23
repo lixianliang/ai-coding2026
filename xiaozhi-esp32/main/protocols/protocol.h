@@ -60,6 +60,12 @@ public:
     virtual bool OpenAudioChannel() = 0;
     virtual void CloseAudioChannel(bool send_goodbye = true) = 0;
     virtual bool IsAudioChannelOpened() const = 0;
+    virtual bool SetUrlOverride(const std::string& url, const std::string& token) {
+        (void)url;
+        (void)token;
+        return false;
+    }
+    virtual void ClearUrlOverride() {}
     virtual bool SendAudio(std::unique_ptr<AudioStreamPacket> packet) = 0;
     virtual void SendWakeWordDetected(const std::string& wake_word);
     virtual void SendStartListening(ListeningMode mode);
