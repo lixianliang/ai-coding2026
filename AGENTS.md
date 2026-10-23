@@ -8,6 +8,7 @@
 - 服务端技术栈：
   - 编程语言: Go
   - HTTP框架: Gin
+  - websocket库： gorilla/websocket
   - 数据库:  SQLite3
   - ORM: GORM
   - 日志: slog
