@@ -107,6 +107,7 @@ staticcheck ./...
 ## 验证边界
 
 - 已验证云端 Qwen ASR、DeepSeek 判题、MiniMax TTS 和 `/playground` HTTP 链路。
-- 已构建并烧录 `yunliao-s3`，启动日志确认板型、8 MB PSRAM 和 ES8388 初始化成功。
-- 未验证真机 Wi-Fi/4G 下的 Game WSS、Linx 本地 MCP 切流和完整按键音频往返；当前设备没有已保存的 Wi-Fi，进入配网模式。
+- 已验证 Game WSS 完整流程：汤面 → 错误回答 → 猜中并朗读汤底 → 讨论态 → “游戏继续” → “退出游戏”。
+- 已通过 Linx 本地 MCP 将真机切到 Game WSS 并播放汤面；固件确认 8 MB PSRAM、ES8388、LCD 和 Wi-Fi 正常。
+- 物理 BOOT 的完整真机问答仍需现场按键验收。
 - 当前不做掉线快照恢复；设备断开即离房。
