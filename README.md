@@ -8,4 +8,6 @@ ESP32-S3 多人语音海龟汤：1～6 个真人玩家、AI 主持、无按键�
 - 服务端内部统一 PCM 16 kHz、单声道、16-bit；设备网络链路继续 Opus，不改 ES8388/AEC。
 - 当前只做海龟汤，不做 AI 玩家、真人主持和掉线恢复。
 
-完整方案、评分展示和 3 分钟 Demo：[docs/design/turtle-soup-game.md](docs/design/turtle-soup-game.md)。
+简化方案、评分展示和 3 分钟 Demo：[docs/design/turtle-soup-game-simplified.md](docs/design/turtle-soup-game-simplified.md)。
+
+同事原方案：[docs/design/turtle-soup-game.md](docs/design/turtle-soup-game.md)。
