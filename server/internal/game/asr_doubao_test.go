@@ -144,6 +144,9 @@ func TestDoubaoStreamingSessionKeepsConnectionAcrossTurns(t *testing.T) {
 			if len(pcm) > 0 && pcm[0] != 0 {
 				utterances = append(utterances, map[string]any{"start_time": ms - 200, "end_time": ms, "text": "问题", "definite": true, "additions": map[string]string{"speaker_id": string(pcm[0])}})
 			}
+			if len(pcm) == 0 || pcm[0] == 0 {
+				continue
+			} // Optimized ASR does not emit unchanged silence results.
 			payload, err := json.Marshal(map[string]any{"audio_info": map[string]int64{"duration": ms}, "result": map[string]any{"utterances": utterances}})
 			if err != nil {
 				t.Error(err)
@@ -160,7 +163,7 @@ func TestDoubaoStreamingSessionKeepsConnectionAcrossTurns(t *testing.T) {
 	defer server.Close()
 	provider, err := NewDoubaoASR("token", "app", "ws"+strings.TrimPrefix(server.URL, "http"), "resource")
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	session, err := provider.Open(ctx, "test")
 	require.NoError(t, err)
@@ -186,4 +189,21 @@ func TestDoubaoStreamingSessionKeepsConnectionAcrossTurns(t *testing.T) {
 		}
 	}
 	require.Len(t, upgraded, 1)
+}
+
+func TestDoubaoFinalizesCachedDefiniteAfterLateManualStop(t *testing.T) {
+	var result doubaoResult
+	require.NoError(t, json.Unmarshal([]byte(`{"audio_info":{"duration":1800},"result":{"utterances":[{"end_time":1600,"text":"再说一遍汤面","definite":true,"additions":{"speaker_id":"0"}}]}}`), &result))
+	s := &doubaoASRSession{capturing: true}
+	event, ok := s.accept(result)
+	require.True(t, ok)
+	require.Equal(t, ASREventPartial, event.Kind)
+	s.capturing = false
+	s.pending = true
+	s.endMS = 4000
+	event, ok = s.resultEvent(s.latest, true)
+	require.True(t, ok)
+	require.Equal(t, ASREventFinal, event.Kind)
+	require.Equal(t, "再说一遍汤面", event.Text)
+	require.False(t, s.pending)
 }

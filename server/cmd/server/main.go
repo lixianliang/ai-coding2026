@@ -89,6 +89,7 @@ func run(logger *slog.Logger) error {
 		TTS:          tts,
 		Judge:        judge,
 		Codec:        codec,
+		SpeechCodec:  func() (game.AudioCodec, error) { return game.NewOpusCodec() },
 		Logger:       logger,
 		TurnDuration: time.Duration(cfg.TurnDurationSeconds) * time.Second,
 		GameDuration: time.Duration(cfg.GameDurationSeconds) * time.Second,
