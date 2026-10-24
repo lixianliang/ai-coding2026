@@ -26,7 +26,7 @@ const (
 	minimaxEventFailed      = "task_failed"
 	minimaxReadLimit        = 8 << 20
 	minimaxDialTimeout      = 10 * time.Second
-	minimaxSynthesisTimeout = 30 * time.Second
+	minimaxSynthesisTimeout = speechTimeout
 )
 
 type MiniMaxTTS struct {

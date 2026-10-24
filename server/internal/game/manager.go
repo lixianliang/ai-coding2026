@@ -23,13 +23,14 @@ const (
 	ttsPrebufferFrames = 5
 	commandQueueSize   = 256
 	externalTimeout    = 20 * time.Second
+	speechTimeout      = 2 * time.Minute
 )
 
 var (
 	exitPhrases          = []string{"退出游戏", "退出房间", "不玩了"}
 	startPhrases         = []string{"开始游戏", "开始新游戏", "新游戏"}
 	continuePhrases      = []string{"游戏继续", "继续游戏", "再来一局", "下一局", "继续玩"}
-	repeatSurfacePhrases = []string{"再说一遍汤面", "重复一下汤面", "再播一遍汤面", "汤面再说一遍", "忘了汤面"}
+	repeatSurfacePhrases = []string{"再说一遍汤面", "重复一下汤面", "再播一遍汤面", "汤面再说一遍", "忘了汤面", "再讲一遍汤面", "再说一次汤面", "重复汤面", "再说一遍题目"}
 )
 
 const (
@@ -44,6 +45,7 @@ type Deps struct {
 	TTS          TTS
 	Judge        Judge
 	Codec        AudioCodec
+	SpeechCodec  func() (AudioCodec, error)
 	Logger       *slog.Logger
 	TurnDuration time.Duration
 	GameDuration time.Duration
@@ -571,6 +573,7 @@ func (r *room) handleASREvent(client *client, event ASREvent) {
 		}
 		r.stopTurnTimer()
 		r.active = nil
+		r.deps.Logger.Info("recognized utterance", "room_id", r.id, "text", event.Text)
 		if strings.TrimSpace(event.Text) == "" {
 			if r.timeExpired {
 				r.speakTimeoutAnswer()
@@ -729,9 +732,24 @@ func (r *room) beginSpeech(text string, action speechAction, winner string) {
 	}
 	seq := r.speechSeq
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), externalTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), speechTimeout)
 		defer cancel()
-		writer := newPCMStreamWriter(client, r.deps.Codec)
+		codec := r.deps.Codec
+		if r.deps.SpeechCodec != nil {
+			var err error
+			codec, err = r.deps.SpeechCodec()
+			if err != nil {
+				r.deps.Logger.Error("create speech codec", "error", err)
+				client.close()
+				return
+			}
+			defer func() {
+				if err := codec.Close(); err != nil {
+					r.deps.Logger.Warn("close speech codec", "error", err)
+				}
+			}()
+		}
+		writer := newPCMStreamWriter(client, codec)
 		defer writer.ticker.Stop()
 		err := r.deps.TTS.Stream(ctx, text, writer.Write)
 		if err == nil {
@@ -753,6 +771,7 @@ type pcmStreamWriter struct {
 	codec      AudioCodec
 	pending    []byte
 	framesSent int
+	started    bool
 	ticker     *time.Ticker
 }
 
@@ -766,6 +785,13 @@ func newPCMStreamWriter(client *client, codec AudioCodec) *pcmStreamWriter {
 
 func (w *pcmStreamWriter) Write(chunk []byte) error {
 	w.pending = append(w.pending, chunk...)
+	if !w.started {
+		if len(w.pending) < ttsPrebufferFrames*opusFrameBytes {
+			return nil
+		}
+		w.started = true
+		w.ticker.Reset(AudioFrameDuration * time.Millisecond)
+	}
 	for len(w.pending) >= opusFrameBytes {
 		if err := w.send(w.pending[:opusFrameBytes]); err != nil {
 			return err
@@ -782,7 +808,20 @@ func (w *pcmStreamWriter) Flush() error {
 	if len(w.pending) == 0 {
 		return nil
 	}
-	return w.send(w.pending)
+	// Short replies still flush; complete replies retain streaming startup buffering.
+	w.started = true
+	w.ticker.Reset(AudioFrameDuration * time.Millisecond)
+	if err := w.Write(nil); err != nil {
+		return err
+	}
+	if len(w.pending) == 0 {
+		return nil
+	}
+	if err := w.send(w.pending); err != nil {
+		return err
+	}
+	w.pending = nil
+	return nil
 }
 
 func (w *pcmStreamWriter) send(pcm []byte) error {
@@ -918,6 +957,7 @@ func isContinuePhrase(text string) bool {
 }
 
 func isRepeatSurfacePhrase(text string) bool {
+	text = normalizeText(text)
 	for _, phrase := range repeatSurfacePhrases {
 		if strings.Contains(text, phrase) {
 			return true

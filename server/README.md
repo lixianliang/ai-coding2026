@@ -43,7 +43,7 @@ go run ./cmd/server
 - 游戏进行中如果忘记汤面，可以说“再说一遍汤面”或“重复一下汤面”；服务端重播当前固定题面，不进入判题。
 - `listen start` 前和 `listen stop` 后的音频丢弃；普通现场讨论不上传，只有 `stop` 才提交本次 manual 收音给 ASR。
 - 服务端用 ASR final 文本交给 DeepSeek 判定：`yes/no/close/irrelevant/correct`。
-- 判定和固定汤底都由 MiniMax 流式合成；PCM 分片边到边编码成 Opus，前 5 帧预缓冲后按 60 ms/帧下发，尾帧全部发完才发送 `tts stop`。固定汤底文本来自题库，不由 LLM 改写。
+- 判定和固定汤底都由 MiniMax 流式合成；先攒够 5 帧（300 ms）PCM 再起播，后续分片边到边编码成 Opus，按 60 ms/帧下发；短回复在合成结束时完整 Flush，尾帧全部发完才发送 `tts stop`。每段播报独立创建 Opus 编码器，避免跨房间/跨播报共享预测状态；播报最长等待 2 分钟，与判题超时分开。固定汤底文本来自题库，不由 LLM 改写。
 - AI 播报时设备处于 `speaking`，忽略 BOOT；`tts stop` 后保持 `idle`。
 - 猜中或超时后朗读汤底并进入讨论态，不自动开下一局；按 BOOT 说“游戏继续”才开新题，也可以说“开始游戏”。
 - 讨论态语音不做判题；说“退出游戏”关闭连接并释放房间。
@@ -129,7 +129,7 @@ staticcheck ./...
 配置示例已改用豆包 ASR 2.0：`asr.provider=doubao`，`app_id` 填应用 ID，`api_key` 填 Access Token。密钥只放忽略的 `config.local.json`。旧配置不填 `provider` 时仍用 Qwen，能判题，但没有说话人编号，不计个人分。无需改固件。
 
 - 采用官方 `bigmodel_async` 接口，开启 `enable_nonstream`、`enable_speaker_info`、`show_utterances`，`ssd_version=200`。
-- 每个设备连接复用一条 ASR 连接；BOOT stop 后补静音等待确定分句，再把整次提问交给裁判。发言中间的停顿不会提前判题。
+- 每个设备连接复用一条 ASR 连接；BOOT stop 后补静音等待确定分句，再把整次提问交给裁判；如果确定文本早于按键结束到达，使用缓存结果，不等待静音期间不会再推送的新事件。发言中间的停顿不会提前判题。
 - 主持播报和玩家讨论期间只发合成静音保活，不采集现场讨论。保持会话有额外 ASR 时长成本，不能再按仅提问时长估算费用。
 - 玩家编号只保证本局映射，不代表实名声纹；换局重新编号，断线不恢复。无说话人/混合说话人不计个人分。录音回放目前尚未实现。
 

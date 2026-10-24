@@ -140,6 +140,10 @@ type doubaoASRSession struct {
 	done               chan struct{}
 	closeOnce          sync.Once
 	mu                 sync.Mutex
+	eventMu            sync.Mutex
+	eventsClosed       bool
+	latest             doubaoResult
+	finalizeAt         time.Time
 	sentBytes          int64
 	startMS, endMS     int64
 	capturing, pending bool
@@ -161,6 +165,7 @@ func (s *doubaoASRSession) Push(ctx context.Context, pcm []byte) error {
 	if !s.capturing {
 		s.startMS = s.audioMS()
 		s.capturing = true
+		s.latest = doubaoResult{}
 	}
 	for len(pcm) > 0 {
 		n := min(len(pcm), doubaoPacketBytes)
@@ -183,6 +188,7 @@ func (s *doubaoASRSession) Finalize(ctx context.Context) error {
 	s.capturing = false
 	s.pending = true
 	s.endMS = s.audioMS()
+	s.finalizeAt = time.Now().Add(time.Duration(doubaoVADWindowMS+doubaoFinalizeSilenceMS) * time.Millisecond)
 	s.deadline = time.Now().Add(doubaoFinalTimeout)
 	return nil
 }
@@ -239,7 +245,15 @@ func (s *doubaoASRSession) keepAlive(ctx context.Context) {
 			if s.pending && time.Now().After(s.deadline) {
 				err = errors.New("doubao final transcript timeout")
 			}
+			var event ASREvent
+			ready := false
+			if s.pending && time.Now().After(s.finalizeAt) {
+				event, ready = s.resultEvent(s.latest, true)
+			}
 			s.mu.Unlock()
+			if ready {
+				s.emit(event)
+			}
 			if err != nil {
 				slog.Warn("doubao ASR stream failed", "error", err)
 				if closeErr := s.Close(); closeErr != nil {
@@ -327,6 +341,11 @@ func (s *doubaoASRSession) accept(result doubaoResult) (ASREvent, bool) {
 	if !s.capturing && !s.pending {
 		return ASREvent{}, false
 	}
+	s.latest = result
+	return s.resultEvent(result, false)
+}
+
+func (s *doubaoASRSession) resultEvent(result doubaoResult, stopped bool) (ASREvent, bool) {
 	var parts []string
 	speaker := ""
 	mixed := false
@@ -350,17 +369,28 @@ func (s *doubaoASRSession) accept(result doubaoResult) (ASREvent, bool) {
 		}
 	}
 	event := ASREvent{Kind: ASREventPartial, Text: strings.Join(parts, " ")}
-	if s.pending && definite && result.AudioInfo.Duration >= s.endMS+doubaoFinalizeSilenceMS {
+	if s.pending && definite && ((stopped && len(parts) > 0) || result.AudioInfo.Duration >= s.endMS+doubaoFinalizeSilenceMS) {
 		s.pending = false
 		event.Kind = ASREventFinal
 		if !mixed {
 			event.SpeakerID = speaker
 		}
 	}
-	return event, true
+	return event, !stopped || event.Kind == ASREventFinal
+}
+func (s *doubaoASRSession) emit(event ASREvent) {
+	s.eventMu.Lock()
+	defer s.eventMu.Unlock()
+	if s.eventsClosed {
+		return
+	}
+	select {
+	case s.events <- event:
+	case <-s.done:
+	}
 }
 func (s *doubaoASRSession) readLoop() {
-	defer close(s.events)
+	defer func() { s.eventMu.Lock(); s.eventsClosed = true; close(s.events); s.eventMu.Unlock() }()
 	defer func() {
 		if err := s.Close(); err != nil {
 			slog.Warn("close doubao ASR", "error", err)
@@ -383,11 +413,7 @@ func (s *doubaoASRSession) readLoop() {
 			return
 		}
 		if event, ok := s.accept(result); ok {
-			select {
-			case s.events <- event:
-			case <-s.done:
-				return
-			}
+			s.emit(event)
 		}
 	}
 }
