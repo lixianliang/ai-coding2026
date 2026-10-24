@@ -102,7 +102,9 @@ go run ./cmd/eval -config config.local.json
 go run ./cmd/eval -config config.local.json -e2e
 ```
 
-评估集覆盖 `yes/no/close/irrelevant/correct` 五类。本次实测分别为 `5/5 passed in 3.6s` 和 `5/5 passed in 19.8s`；结果会随网络和模型服务波动。
+当前评估集为同一题目的 8 条样例，覆盖 `yes/no/close/irrelevant/correct` 五类及带姓名表述；质量函数为“调用无错误且实际判定等于预期”，任一失败返回非零退出码。2026-10-24 云端语音链曾测得 8/8、总耗时 72.28 秒；这是包含输入合成和实时上传的历史运行记录，不是当前版本保证或玩家首音时延。
+
+统一质量体系见 [技术方案第 10 节](../docs/design/turtle-soup-game-simplified.md#10-评分维度与现场证据)：模型基准、真实链路 E2E、单元/集成与工程检查、AI 研发 skills。`-e2e` 是云端组件链，不经过设备或完整游戏状态机；说话人验证使用下方 `cmd/speaker-eval`，完整真机游戏另外验收。
 
 ## 检查
 
@@ -111,7 +113,8 @@ gofmt -l .
 go vet ./...
 go test ./...
 go test -race ./...
-staticcheck ./...
+GOCACHE=/tmp/codex-staticcheck-cache GOMODCACHE=/tmp/codex-staticcheck-mod \
+  /tmp/codex-go-bin/staticcheck ./...
 ```
 
 测试覆盖入房欢迎、“开始游戏”、manual start/stop、start 前音频丢弃、第二设备拒绝、猜中后朗读固定汤底、讨论态不判题、“游戏继续”、“退出游戏”、60 秒收音超时、10 分钟局时超时、配置题库更新与停用，以及 TTS 流式首片下发、非整帧分片重组、尾帧完整下发和异常中断。
