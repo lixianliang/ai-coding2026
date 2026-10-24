@@ -20,6 +20,7 @@ const (
 	writeTimeout       = 10 * time.Second
 	websocketReadLimit = 1 << 20
 	outboundQueueSize  = 256
+	ttsPrebufferFrames = 5
 	commandQueueSize   = 256
 	externalTimeout    = 20 * time.Second
 )
@@ -683,9 +684,7 @@ func (r *room) beginSpeech(text string, action speechAction, winner string) {
 			if err != nil {
 				r.deps.Logger.Warn("encode host speech", "room_id", r.id, "error", err)
 			} else if client != nil {
-				for _, packet := range packets {
-					client.sendAudio(packet)
-				}
+				sendPacedAudio(client, packets)
 			}
 		}
 		if client != nil {
@@ -693,6 +692,20 @@ func (r *room) beginSpeech(text string, action speechAction, winner string) {
 		}
 		r.submit(roomCommand{kind: commandSpeechDone, seq: seq})
 	}()
+}
+
+// sendPacedAudio 先发预缓冲帧，之后按帧时长匀速下发：设备解码队列只缓存约 1.2 秒，突发下发会被丢帧
+func sendPacedAudio(client *client, packets [][]byte) {
+	ticker := time.NewTicker(AudioFrameDuration * time.Millisecond)
+	defer ticker.Stop()
+	for i, packet := range packets {
+		if i >= ttsPrebufferFrames {
+			<-ticker.C
+		}
+		if !client.sendAudio(packet) {
+			return
+		}
+	}
 }
 
 func (r *room) handleSpeechDone(seq uint64) {
