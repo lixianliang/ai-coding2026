@@ -57,7 +57,11 @@ func (s *scriptedSession) Finalize(context.Context) error {
 		return errors.New("empty transcript")
 	}
 	s.eventsMu.RLock()
-	s.events <- game.ASREvent{Kind: game.ASREventFinal, Text: text}
+	speaker := ""
+	if strings.HasPrefix(text, "speaker:") {
+		speaker, text, _ = strings.Cut(strings.TrimPrefix(text, "speaker:"), "|")
+	}
+	s.events <- game.ASREvent{Kind: game.ASREventFinal, Text: text, SpeakerID: speaker}
 	s.eventsMu.RUnlock()
 	s.finalizes.Add(1)
 	return nil
@@ -88,20 +92,16 @@ type testJudge struct {
 	calls atomic.Int32
 }
 
-// Judge 按“我是名字，问题”提取玩家，问题含 correct/yes 时返回对应判定。
+// Judge only judges the question; the ASR fake supplies speaker IDs.
 func (j *testJudge) Judge(_ context.Context, _ string, _ string, question string) (game.JudgeResult, error) {
 	j.calls.Add(1)
-	player := ""
-	if rest, ok := strings.CutPrefix(question, "我是"); ok {
-		player, question, _ = strings.Cut(rest, "，")
-	}
 	switch {
 	case strings.Contains(question, "correct"):
-		return game.JudgeResult{Verdict: game.VerdictCorrect, Player: player}, nil
+		return game.JudgeResult{Verdict: game.VerdictCorrect}, nil
 	case strings.Contains(question, "yes"):
-		return game.JudgeResult{Verdict: game.VerdictYes, Player: player}, nil
+		return game.JudgeResult{Verdict: game.VerdictYes}, nil
 	}
-	return game.JudgeResult{Verdict: game.VerdictNo, Player: player}, nil
+	return game.JudgeResult{Verdict: game.VerdictNo}, nil
 }
 
 type passthroughCodec struct{}
@@ -254,36 +254,42 @@ func TestScoreboardRanksPlayersAndAnnouncesChampion(t *testing.T) {
 	require.NotNil(t, idle.Players)
 
 	conn := dialDevice(t, server.URL, "device-1", 1, game.ProtocolVersion1)
-	require.Contains(t, enterGame(t, conn), "我是小明")
+	require.NotContains(t, enterGame(t, conn), "报名字")
 	ask := func(text string) string {
 		writeListen(t, conn, "start")
 		writeAudio(t, conn, text)
 		writeListen(t, conn, "stop")
 		return readSpeech(t, conn)
 	}
-	ask("我是小明，yes")
-	ask("我是小红，yes")
-	ask("我是小红，yes")
+	ask("speaker:alice|yes")
+	ask("speaker:bob|yes")
+	ask("speaker:bob|yes")
+	ask("speaker:carol|yes")
 	ask("yes")
 
 	playing := fetchScoreboard(t, server.URL, 1)
 	require.Equal(t, game.ScoreboardPlaying, playing.Status)
 	require.Empty(t, playing.Answer)
 	require.Equal(t, []game.PlayerScore{
-		{Name: "小红", Score: 2, Questions: 2, Yes: 2},
-		{Name: "小明", Score: 1, Questions: 1, Yes: 1},
+		{Name: "玩家 2", Score: 2, Questions: 2, Yes: 2},
+		{Name: "玩家 1", Score: 1, Questions: 1, Yes: 1},
+		{Name: "玩家 3", Score: 1, Questions: 1, Yes: 1},
 	}, playing.Players)
 
-	speech := ask("我是小明，correct")
-	require.True(t, strings.HasPrefix(speech, "猜对了。本局冠军是小明，得6分。汤底是："), speech)
+	speech := ask("speaker:alice|correct")
+	require.True(t, strings.HasPrefix(speech, "猜对了。本局冠军是玩家 1，得6分。汤底是："), speech)
 	require.True(t, strings.HasSuffix(speech, "本轮游戏结束。想开新一局请说“游戏继续”。"), speech)
-	require.NotContains(t, speech, "小红")
+	require.NotContains(t, speech, "玩家 2")
 
 	finished := fetchScoreboard(t, server.URL, 1)
 	require.Equal(t, game.ScoreboardFinished, finished.Status)
-	require.Equal(t, "小明", finished.Champion)
+	require.Equal(t, "玩家 1", finished.Champion)
 	require.NotEmpty(t, finished.Answer)
-	require.Equal(t, []string{"小明", "小红"}, []string{finished.Players[0].Name, finished.Players[1].Name})
+	require.Equal(t, []string{"玩家 1", "玩家 2"}, []string{finished.Players[0].Name, finished.Players[1].Name})
+	ask("游戏继续")
+	ask("speaker:carol|yes")
+	next := fetchScoreboard(t, server.URL, 1)
+	require.Equal(t, []game.PlayerScore{{Name: "玩家 1", Score: 1, Questions: 1, Yes: 1}}, next.Players)
 }
 
 func fetchScoreboard(t *testing.T, serverURL string, roomID int) game.Scoreboard {

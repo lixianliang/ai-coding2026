@@ -1,6 +1,6 @@
 ---
 name: go-provider-debugging
-description: Diagnose Qwen ASR, DeepSeek judge, MiniMax TTS, and Opus/PCM voice-pipeline failures in this repository. Use for provider configuration, transcript/verdict/audio debugging, latency checks, and end-to-end speech-chain validation; not for unrelated provider integrations.
+description: Diagnose Qwen/Doubao ASR, anonymous speaker attribution, DeepSeek judge, MiniMax TTS, and Opus/PCM voice-pipeline failures in this repository. Use for provider configuration, transcript/verdict/audio debugging, latency checks, and end-to-end speech-chain validation; not for unrelated provider integrations.
 metadata:
   short-description: ASR, LLM, TTS, and voice-chain debugging
 ---
@@ -19,9 +19,10 @@ chmod 600 config.local.json
 
 Provider boundaries in this repository:
 
-- Qwen Realtime WebSocket: raw PCM 16 kHz mono s16le -> final transcript
-- DeepSeek chat completion: surface + answer + transcript -> one verdict
-- MiniMax HTTP: speech text -> WAV/PCM
+- Qwen Realtime WebSocket: raw PCM 16 kHz mono s16le -> final transcript (no speaker identity)
+- Doubao ASR 2.0 WebSocket: PCM -> transcript + session-scoped speaker ID; keep one connection through manual turns
+- DeepSeek chat completion: surface + answer + transcript -> one verdict, never player identity
+- MiniMax streaming TTS: speech text -> PCM fragments
 - Game socket: device Opus <-> server PCM
 
 ## Locate the failing stage
@@ -32,7 +33,7 @@ Run the smallest check that isolates the boundary:
 # Judge only: ASR and TTS are not called.
 go run ./cmd/eval -config config.local.json
 
-# TTS -> Qwen ASR -> DeepSeek -> MiniMax TTS.
+# TTS -> configured ASR -> DeepSeek -> MiniMax TTS.
 go run ./cmd/eval -config config.local.json -e2e
 ```
 
@@ -56,3 +57,5 @@ Interpret failures by stage:
 Use deterministic protocol tests for the welcome prompt, `开始游戏`, manual start/stop, audio before/after capture, duplicate room rejection, verdict speech, fixed answer, discussion state, `游戏继续`, `退出游戏`, and both timeouts. Check configured question IDs, updated surface/answer text, and removal of disabled questions when changing the question bank. Use the provider eval for real model behavior; use a physical device only for Linx MCP cutover, microphone, speaker, BOOT, and network behavior.
 
 When reporting, include the exact command, pass count, and observed latency. Call out whether the result was mocked, provider-backed, browser-backed, or physical-device-backed.
+
+For anonymous player scoring, run `go run ./cmd/speaker-eval -config config.local.json -pcm /tmp/a1.pcm,/tmp/b1.pcm,/tmp/a2.pcm -speakers A,B,A -pause 5s`. Check same-person stability, different-person separation, no scoring for missing/mixed speakers, and per-game reset. Distinguish synthetic voices from real human acceptance. Doubao silent keepalive preserves session clustering but adds billable ASR duration. Do not replace missing speaker IDs with LLM name extraction or per-turn numbering.

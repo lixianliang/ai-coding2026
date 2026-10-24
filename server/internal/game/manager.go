@@ -33,9 +33,9 @@ var (
 )
 
 const (
-	lobbyPrompt      = "欢迎来到海龟汤。请说“开始游戏”开始新一局；一局结束后说“游戏继续”；随时说“退出游戏”离开。"
-	finishedPrompt   = "本轮游戏结束。想开新一局请说“游戏继续”。"
-	playerNamePrompt = "提问时请先报名字，比如：我是小明，他认识厨师吗？"
+	lobbyPrompt    = "欢迎来到海龟汤。请说“开始游戏”开始新一局；一局结束后说“游戏继续”；随时说“退出游戏”离开。"
+	finishedPrompt = "本轮游戏结束。想开新一局请说“游戏继续”。"
+	questionPrompt = "按一下按键开始提问，说完再按一下。每次请一位玩家说话。"
 )
 
 type Deps struct {
@@ -163,6 +163,7 @@ func (m *Manager) Serve(ctx context.Context, conn *websocket.Conn, roomID int, d
 				return
 			}
 		}
+		client.close()
 	}()
 
 	return client.readLoop(room)
@@ -368,6 +369,7 @@ type activeGame struct {
 	recordID uint
 	question Question
 	sheet    scoreSheet
+	speakers map[string]string
 }
 
 type room struct {
@@ -569,6 +571,14 @@ func (r *room) handleASREvent(client *client, event ASREvent) {
 		}
 		r.stopTurnTimer()
 		r.active = nil
+		if strings.TrimSpace(event.Text) == "" {
+			if r.timeExpired {
+				r.speakTimeoutAnswer()
+				return
+			}
+			r.returnToIdle()
+			return
+		}
 		if isExitPhrase(event.Text) {
 			client.close()
 			r.handleLeave(client)
@@ -601,19 +611,17 @@ func (r *room) handleASREvent(client *client, event ASREvent) {
 			r.beginSpeech(r.current.question.Surface, actionOpenQuestions, "")
 			return
 		}
-		r.finishTurn(client, event.Text)
+		r.finishTurn(client, event.Text, event.SpeakerID)
 	}
 }
 
-func (r *room) finishTurn(client *client, text string) {
-	if strings.TrimSpace(text) == "" {
-		text = r.partial
-	}
+func (r *room) finishTurn(client *client, text, speakerID string) {
 	r.stopTurnTimer()
 	r.active = nil
 	r.phase = phaseJudging
 	gameSeq := r.gameSeq
 	question := r.current.question
+	player := r.current.playerForSpeaker(speakerID)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), externalTimeout)
 		defer cancel()
@@ -624,7 +632,7 @@ func (r *room) finishTurn(client *client, text string) {
 			text:     text,
 			deviceID: client.deviceID,
 			verdict:  judged.Verdict,
-			player:   judged.Player,
+			player:   player,
 			err:      err,
 		})
 	}()
@@ -702,7 +710,7 @@ func (r *room) startGame() error {
 	r.gameTimer = time.AfterFunc(r.deps.GameDuration, func() {
 		r.submit(roomCommand{kind: commandGameTimeout, seq: gameSeq})
 	})
-	r.beginSpeech(question.Surface+playerNamePrompt, actionOpenQuestions, "")
+	r.beginSpeech(question.Surface+questionPrompt, actionOpenQuestions, "")
 	return nil
 }
 
@@ -916,4 +924,20 @@ func isRepeatSurfacePhrase(text string) bool {
 		}
 	}
 	return false
+}
+
+// Player numbers are scoped to a game and assigned only to recognized questions.
+func (g *activeGame) playerForSpeaker(speakerID string) string {
+	if speakerID == "" {
+		return ""
+	}
+	if g.speakers == nil {
+		g.speakers = make(map[string]string)
+	}
+	if player, ok := g.speakers[speakerID]; ok {
+		return player
+	}
+	player := fmt.Sprintf("玩家 %d", len(g.speakers)+1)
+	g.speakers[speakerID] = player
+	return player
 }

@@ -22,10 +22,11 @@
     }
   ],
   "asr": {
-    "api_key": "replace-with-qwen-api-key",
-    "url": "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
-    "model": "qwen3-asr-flash-realtime",
-    "language": "zh"
+    "provider": "doubao",
+    "api_key": "replace-with-doubao-access-token",
+    "app_id": "replace-with-doubao-app-id",
+    "url": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async",
+    "resource_id": "volc.seedasr.sauc.duration"
   },
   "llm": {
     "api_key": "replace-with-deepseek-api-key",

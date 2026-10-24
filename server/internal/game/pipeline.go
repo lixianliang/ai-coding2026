@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 )
 
 const (
@@ -22,7 +24,6 @@ type Pipeline struct {
 type TurnResult struct {
 	Transcript string
 	Verdict    Verdict
-	Player     string
 	Speech     string
 	PCM        []byte
 }
@@ -53,9 +54,9 @@ func (p *Pipeline) Turn(ctx context.Context, pcm []byte, surface, answer string)
 		audio = append(audio, chunk...)
 		return nil
 	}); err != nil {
-		return TurnResult{Transcript: transcript, Verdict: verdict, Player: judged.Player, Speech: speech}, err
+		return TurnResult{Transcript: transcript, Verdict: verdict, Speech: speech}, err
 	}
-	return TurnResult{Transcript: transcript, Verdict: verdict, Player: judged.Player, Speech: speech, PCM: audio}, nil
+	return TurnResult{Transcript: transcript, Verdict: verdict, Speech: speech, PCM: audio}, nil
 }
 
 func (p *Pipeline) Transcribe(ctx context.Context, pcm []byte) (string, error) {
@@ -69,12 +70,21 @@ func (p *Pipeline) Transcribe(ctx context.Context, pcm []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("open ASR: %w", err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil {
+			slog.Warn("close pipeline ASR", "error", err)
+		}
+	}()
 
 	for offset := 0; offset < len(pcm); offset += pipelineChunkBytes {
 		end := min(offset+pipelineChunkBytes, len(pcm))
 		if err := session.Push(ctx, pcm[offset:end]); err != nil {
 			return "", fmt.Errorf("push ASR audio: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(time.Duration(end-offset) * time.Second / (AudioSampleRate * pcmSampleBytes)):
 		}
 	}
 	if err := session.Finalize(ctx); err != nil {

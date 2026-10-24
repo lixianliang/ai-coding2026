@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -77,7 +78,11 @@ func (j *DeepSeekJudge) Judge(ctx context.Context, surface, answer, question str
 	if err != nil {
 		return JudgeResult{}, fmt.Errorf("call deepseek: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			slog.Warn("close deepseek response", "error", err)
+		}
+	}()
 	body, err := io.ReadAll(io.LimitReader(response.Body, deepSeekResponseSize))
 	if err != nil {
 		return JudgeResult{}, fmt.Errorf("read deepseek response: %w", err)
@@ -100,13 +105,13 @@ func (j *DeepSeekJudge) Judge(ctx context.Context, surface, answer, question str
 }
 
 const judgeSystemPrompt = `你是海龟汤游戏裁判。根据完整汤底判断玩家最新发言，只输出 JSON：
-{"verdict":"yes|no|close|irrelevant|correct","player":"玩家名字"}
-player：玩家发言开头自报的名字，例如“我是小明，他认识厨师吗”中的“小明”；没有自报名字时输出空字符串。判定 verdict 时忽略自报名字的部分。
+{"verdict":"yes|no|close|irrelevant|correct"}
 verdict 规则：
-- correct：玩家已经完整说出核心真相，可以直接结束本局。
+- correct：玩家以陈述方式完整说出核心真相和因果关系，可以直接结束本局。仅询问一个关键事实（即使问到核心事实）仍按 yes/no 判定，不提前结束。
 - yes：玩家提出的是/否问题，按汤底判断为是。
 - no：玩家提出的是/否问题，按汤底判断为否。
-- close：方向接近核心真相，但仍缺少关键事实。
+- close：提出模糊猜想，方向接近核心真相，但未指出关键事物或原因。
+例如汤底为“水冻成冰，火柴落在冰面所以没灭”：问“杯子里的水是冰吗”是 yes；泛指“落到某种能托住它的东西上”是 close；完整陈述“水冻成冰，火柴落在冰面所以没灭”才是 correct。
 - irrelevant：与汤底无关。
 不要解释，不要输出其他字段。`
 
@@ -149,14 +154,13 @@ func parseJudgeResult(content string) (JudgeResult, error) {
 	}
 	var result struct {
 		Verdict Verdict `json:"verdict"`
-		Player  string  `json:"player"`
 	}
 	if err := json.Unmarshal([]byte(content[start:end+1]), &result); err != nil {
 		return JudgeResult{}, fmt.Errorf("decode deepseek verdict: %w", err)
 	}
 	switch result.Verdict {
 	case VerdictYes, VerdictNo, VerdictClose, VerdictIrrelevant, VerdictCorrect:
-		return JudgeResult{Verdict: result.Verdict, Player: strings.TrimSpace(result.Player)}, nil
+		return JudgeResult{Verdict: result.Verdict}, nil
 	default:
 		return JudgeResult{}, fmt.Errorf("unsupported deepseek verdict %q", result.Verdict)
 	}
