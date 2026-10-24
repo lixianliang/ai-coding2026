@@ -32,6 +32,9 @@ const (
 	routeGame             = "/v1/game"
 	routePlayground       = "/playground"
 	routePlaygroundTurn   = "/v1/playground/turn"
+	routeScoreboard       = "/scoreboard"
+	routeRoomScoreboard   = "/v1/rooms/:room_id/scoreboard"
+	paramRoomID           = "room_id"
 	successCode           = 0
 	badRequestCode        = 40000
 	unauthorizedCode      = 40100
@@ -42,6 +45,9 @@ const (
 
 //go:embed playground.html
 var playgroundHTML []byte
+
+//go:embed scoreboard.html
+var scoreboardHTML []byte
 
 type response struct {
 	Code    int    `json:"code"`
@@ -83,6 +89,8 @@ func NewRouter(manager *game.Manager, pipeline *game.Pipeline, token string, log
 	router.GET(routeGame, handler.gameWebSocket)
 	router.GET(routePlayground, handler.playground)
 	router.POST(routePlaygroundTurn, handler.playgroundTurn)
+	router.GET(routeScoreboard, handler.scoreboardPage)
+	router.GET(routeRoomScoreboard, handler.roomScoreboard)
 	return router
 }
 
@@ -173,6 +181,26 @@ func (h *Handler) playgroundTurn(c *gin.Context) {
 			"bits_per_sample":  16,
 		},
 	})
+}
+
+func (h *Handler) scoreboardPage(c *gin.Context) {
+	c.Data(http.StatusOK, "text/html; charset=utf-8", scoreboardHTML)
+}
+
+// roomScoreboard 供门店大屏只读展示，不要求设备 token。
+func (h *Handler) roomScoreboard(c *gin.Context) {
+	roomID, err := strconv.Atoi(c.Param(paramRoomID))
+	if err != nil || roomID < game.RoomMin || roomID > game.RoomMax {
+		h.badRequest(c, "room_id must be 1, 2, or 3")
+		return
+	}
+	board, err := h.manager.Scoreboard(roomID)
+	if err != nil {
+		h.logger.Warn("read scoreboard", "room_id", roomID, "error", err)
+		c.JSON(http.StatusOK, response{Code: serverErrorCode, Message: "scoreboard is unavailable", ReqID: requestID(c), Data: nil})
+		return
+	}
+	c.JSON(http.StatusOK, response{Code: successCode, Message: "ok", ReqID: requestID(c), Data: board})
 }
 
 func (h *Handler) authorized(header string) bool {

@@ -50,7 +50,7 @@ func NewDeepSeekJudge(apiKey, baseURL, model string, maxTokens int, temperature 
 	}, nil
 }
 
-func (j *DeepSeekJudge) Judge(ctx context.Context, surface, answer, question string) (Verdict, error) {
+func (j *DeepSeekJudge) Judge(ctx context.Context, surface, answer, question string) (JudgeResult, error) {
 	payload := deepSeekRequest{
 		Model: j.model,
 		Messages: []deepSeekMessage{
@@ -65,43 +65,44 @@ func (j *DeepSeekJudge) Judge(ctx context.Context, surface, answer, question str
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("marshal deepseek request: %w", err)
+		return JudgeResult{}, fmt.Errorf("marshal deepseek request: %w", err)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, j.endpoint, bytes.NewReader(raw))
 	if err != nil {
-		return "", fmt.Errorf("create deepseek request: %w", err)
+		return JudgeResult{}, fmt.Errorf("create deepseek request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+j.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := j.client.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("call deepseek: %w", err)
+		return JudgeResult{}, fmt.Errorf("call deepseek: %w", err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, deepSeekResponseSize))
 	if err != nil {
-		return "", fmt.Errorf("read deepseek response: %w", err)
+		return JudgeResult{}, fmt.Errorf("read deepseek response: %w", err)
 	}
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("deepseek returned status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+		return JudgeResult{}, fmt.Errorf("deepseek returned status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var result deepSeekResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("decode deepseek response: %w", err)
+		return JudgeResult{}, fmt.Errorf("decode deepseek response: %w", err)
 	}
 	if len(result.Choices) == 0 {
-		return "", errors.New("deepseek returned no choices")
+		return JudgeResult{}, errors.New("deepseek returned no choices")
 	}
 	content := strings.TrimSpace(result.Choices[0].Message.Content)
 	if content == "" {
-		return "", errors.New("deepseek returned empty content")
+		return JudgeResult{}, errors.New("deepseek returned empty content")
 	}
-	return parseVerdict(content)
+	return parseJudgeResult(content)
 }
 
 const judgeSystemPrompt = `你是海龟汤游戏裁判。根据完整汤底判断玩家最新发言，只输出 JSON：
-{"verdict":"yes|no|close|irrelevant|correct"}
-规则：
+{"verdict":"yes|no|close|irrelevant|correct","player":"玩家名字"}
+player：玩家发言开头自报的名字，例如“我是小明，他认识厨师吗”中的“小明”；没有自报名字时输出空字符串。判定 verdict 时忽略自报名字的部分。
+verdict 规则：
 - correct：玩家已经完整说出核心真相，可以直接结束本局。
 - yes：玩家提出的是/否问题，按汤底判断为是。
 - no：玩家提出的是/否问题，按汤底判断为否。
@@ -140,22 +141,23 @@ type deepSeekResponse struct {
 	} `json:"choices"`
 }
 
-func parseVerdict(content string) (Verdict, error) {
+func parseJudgeResult(content string) (JudgeResult, error) {
 	start := strings.Index(content, "{")
 	end := strings.LastIndex(content, "}")
 	if start < 0 || end < start {
-		return "", fmt.Errorf("deepseek verdict is not JSON: %q", content)
+		return JudgeResult{}, fmt.Errorf("deepseek verdict is not JSON: %q", content)
 	}
 	var result struct {
 		Verdict Verdict `json:"verdict"`
+		Player  string  `json:"player"`
 	}
 	if err := json.Unmarshal([]byte(content[start:end+1]), &result); err != nil {
-		return "", fmt.Errorf("decode deepseek verdict: %w", err)
+		return JudgeResult{}, fmt.Errorf("decode deepseek verdict: %w", err)
 	}
 	switch result.Verdict {
 	case VerdictYes, VerdictNo, VerdictClose, VerdictIrrelevant, VerdictCorrect:
-		return result.Verdict, nil
+		return JudgeResult{Verdict: result.Verdict, Player: strings.TrimSpace(result.Player)}, nil
 	default:
-		return "", fmt.Errorf("unsupported deepseek verdict %q", result.Verdict)
+		return JudgeResult{}, fmt.Errorf("unsupported deepseek verdict %q", result.Verdict)
 	}
 }
