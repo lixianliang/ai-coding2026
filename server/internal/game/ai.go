@@ -123,17 +123,18 @@ func normalizeText(value string) string {
 }
 
 type TTS interface {
-	Synthesize(context.Context, string) ([]byte, error)
+	// Stream emits PCM fragments in playback order and returns only after synthesis completes.
+	Stream(context.Context, string, func([]byte) error) error
 }
 
-// SilenceTTS keeps the complete Opus playback path testable without a cloud key.
+// SilenceTTS keeps the streamed Opus playback path testable without a cloud key.
 type SilenceTTS struct{}
 
 const silenceDurationMS = 600
 
-func (SilenceTTS) Synthesize(context.Context, string) ([]byte, error) {
+func (SilenceTTS) Stream(_ context.Context, _ string, onAudio func([]byte) error) error {
 	samples := AudioSampleRate * silenceDurationMS / 1000
-	return make([]byte, samples*pcmSampleBytes), nil
+	return onAudio(make([]byte, samples*pcmSampleBytes))
 }
 
 func VerdictSpeech(verdict Verdict) string {

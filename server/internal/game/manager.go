@@ -692,16 +692,14 @@ func (r *room) beginSpeech(text string, action speechAction, winner string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), externalTimeout)
 		defer cancel()
-		pcm, err := r.deps.TTS.Synthesize(ctx, text)
+		writer := newPCMStreamWriter(client, r.deps.Codec)
+		defer writer.ticker.Stop()
+		err := r.deps.TTS.Stream(ctx, text, writer.Write)
+		if err == nil {
+			err = writer.Flush()
+		}
 		if err != nil {
-			r.deps.Logger.Warn("synthesize host speech", "room_id", r.id, "error", err)
-		} else {
-			packets, err := r.deps.Codec.EncodePCM(pcm)
-			if err != nil {
-				r.deps.Logger.Warn("encode host speech", "room_id", r.id, "error", err)
-			} else if client != nil {
-				sendPacedAudio(client, packets)
-			}
+			r.deps.Logger.Warn("stream host speech", "room_id", r.id, "error", err)
 		}
 		if client != nil {
 			client.sendMessage(Message{Type: messageTypeTTS, State: messageStateStop})
@@ -710,18 +708,59 @@ func (r *room) beginSpeech(text string, action speechAction, winner string) {
 	}()
 }
 
-// sendPacedAudio 先发预缓冲帧，之后按帧时长匀速下发：设备解码队列只缓存约 1.2 秒，突发下发会被丢帧
-func sendPacedAudio(client *client, packets [][]byte) {
-	ticker := time.NewTicker(AudioFrameDuration * time.Millisecond)
-	defer ticker.Stop()
-	for i, packet := range packets {
-		if i >= ttsPrebufferFrames {
-			<-ticker.C
-		}
-		if !client.sendAudio(packet) {
-			return
-		}
+// pcmStreamWriter 把不保证按帧对齐的 TTS 分片重新分帧，并保持设备播放队列不溢出。
+type pcmStreamWriter struct {
+	client     *client
+	codec      AudioCodec
+	pending    []byte
+	framesSent int
+	ticker     *time.Ticker
+}
+
+func newPCMStreamWriter(client *client, codec AudioCodec) *pcmStreamWriter {
+	return &pcmStreamWriter{
+		client: client,
+		codec:  codec,
+		ticker: time.NewTicker(AudioFrameDuration * time.Millisecond),
 	}
+}
+
+func (w *pcmStreamWriter) Write(chunk []byte) error {
+	w.pending = append(w.pending, chunk...)
+	for len(w.pending) >= opusFrameBytes {
+		if err := w.send(w.pending[:opusFrameBytes]); err != nil {
+			return err
+		}
+		w.pending = w.pending[opusFrameBytes:]
+	}
+	return nil
+}
+
+func (w *pcmStreamWriter) Flush() error {
+	if len(w.pending)%pcmSampleBytes != 0 {
+		return errors.New("streamed PCM byte length must be divisible by 2")
+	}
+	if len(w.pending) == 0 {
+		return nil
+	}
+	return w.send(w.pending)
+}
+
+func (w *pcmStreamWriter) send(pcm []byte) error {
+	packets, err := w.codec.EncodePCM(pcm)
+	if err != nil {
+		return fmt.Errorf("encode streamed PCM: %w", err)
+	}
+	for _, packet := range packets {
+		if w.framesSent >= ttsPrebufferFrames {
+			<-w.ticker.C
+		}
+		if w.client != nil && !w.client.sendAudio(packet) {
+			return errors.New("send streamed audio: device disconnected")
+		}
+		w.framesSent++
+	}
+	return nil
 }
 
 func (r *room) handleSpeechDone(seq uint64) {

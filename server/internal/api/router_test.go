@@ -76,8 +76,12 @@ func (s *scriptedSession) Close() error {
 
 type testTTS struct{}
 
-func (testTTS) Synthesize(_ context.Context, text string) ([]byte, error) {
-	return []byte("tts:" + text), nil
+func (testTTS) Stream(_ context.Context, text string, onAudio func([]byte) error) error {
+	pcm := []byte("tts:" + text)
+	if len(pcm)%2 != 0 {
+		pcm = append(pcm, 0)
+	}
+	return onAudio(pcm)
 }
 
 type testJudge struct {

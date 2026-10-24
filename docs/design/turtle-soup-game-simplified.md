@@ -72,7 +72,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 - 连接后设备发 `hello`，服务端返回 `hello`。
 - 设备发 `listen state=start mode=manual`，随后上传 Opus 二进制帧。
 - 设备发 `listen state=stop` 后，服务端提交 Qwen ASR。
-- 服务端发 `tts state=start`，随后下发 Opus 二进制帧，最后发 `tts state=stop`。
+- 服务端发 `tts state=start`，TTS 分片边到边编码为 Opus 二进制帧，全部尾帧发完后才发 `tts state=stop`。
 - `stt`、`tts sentence_start` 只用于显示，不参与控制。
 
 房间从 Game WSS URL 的 `room_id` 查询参数确定；设备身份取握手头 `Device-Id`。房间的“开局、判题、讨论、结束”只存在于服务端，不下发成设备协议。
@@ -89,7 +89,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 
 控制约定只有三条：
 
-1. 播放：`tts start` → Opus 帧 → `tts stop`。
+1. 播放：`tts start` → 流式 Opus 帧 → 最后音频发完 → `tts stop`。
 2. 设备在 AI 播报时处于 `speaking`，BOOT 不启动新一轮收音。
 3. `tts stop` 不负责截断播放；固件等待解码队列排空后完成状态切换。
 
@@ -101,7 +101,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 
 1. 设备连接 Game WSS 后，Go 先播放欢迎提示并停在等待开局状态，不自动选题。
 2. 玩家按 BOOT 说“开始游戏”，Go 从可配置题库选一题，锁住汤面和汤底。
-3. 服务端发 `tts start`，用 AI 音色朗读汤面，再发 `tts stop`。
+3. 服务端发 `tts start`，MiniMax PCM 分片一到就编码为 Opus 匀速下发，尾帧发完再发 `tts stop`。
 4. 设备播完后回到 idle；玩家可以现场讨论，只有需要向 AI 提问或猜测汤底时才按 BOOT 开始一次 manual 收音。
 
 ### 4.2 玩家提问
@@ -111,7 +111,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 3. Qwen 的 partial 结果只用于日志或显示，不推进游戏状态。
 4. 玩家说完后再按 BOOT，设备发 `listen stop`；Go 提交当前 ASR 音频并等待 final。
 5. final 文本交给 DeepSeek，判定为 `yes / no / close / irrelevant / correct`。
-6. Go 将判定结果交给 TTS，编码为 Opus 下发；播放完成后设备回 idle，玩家可以继续现场讨论。
+6. Go 将判定结果交给 TTS，边收 PCM 分片边编码为 Opus 下发；最后音频完整发出后才进入播放结束，设备回 idle，玩家可以继续现场讨论。
 
 不自己实现 VAD。当前按键 manual 模式由玩家显式按键结束收音；只有按键确认的语音才提交给 Go，ASR 中间结果由 Qwen 提供。
 
@@ -126,7 +126,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 
 - 设备 ↔ Go：Opus，16 kHz、单声道，沿用固件现有编解码。
 - Go 内部与 ASR/TTS provider：PCM 16 kHz、单声道、16-bit。
-- TTS 返回 PCM，Go 编成 Opus 下发。
+- TTS 流式返回 PCM 分片；Go 缓存不足一帧的尾部并重组为 60 ms Opus 帧，前 5 帧预缓冲后匀速下发。
 - 首版不接收或转发玩家之间的音频。
 
 ## 5. AI 主持
