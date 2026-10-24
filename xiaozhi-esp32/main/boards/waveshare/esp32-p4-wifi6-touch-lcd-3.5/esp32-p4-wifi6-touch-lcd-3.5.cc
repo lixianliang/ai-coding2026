@@ -144,7 +144,12 @@ private:
                 EnterWifiConfigMode();
                 return;
             }
-            esp_restart();
+            // 按一次开始 manual 收音，再按一次结束
+            if (state == kDeviceStateListening) {
+                app.StopListening();
+            } else if (state == kDeviceStateIdle) {
+                app.StartListening();
+            }
         });
         Application::GetInstance().StartListening();
     }
