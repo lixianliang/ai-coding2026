@@ -89,28 +89,34 @@ const (
 	VerdictCorrect    Verdict = "correct"
 )
 
+// JudgeResult 中 Player 是玩家发言开头自报的名字，未自报时为空。
+type JudgeResult struct {
+	Verdict Verdict
+	Player  string
+}
+
 type Judge interface {
-	Judge(context.Context, string, string, string) (Verdict, error)
+	Judge(context.Context, string, string, string) (JudgeResult, error)
 }
 
 // RuleJudge is the no-key fallback. It only recognizes an explicit answer and
 // returns a conservative response for everything else.
 type RuleJudge struct{}
 
-func (RuleJudge) Judge(_ context.Context, _ string, answer string, question string) (Verdict, error) {
+func (RuleJudge) Judge(_ context.Context, _ string, answer string, question string) (JudgeResult, error) {
 	normalizedQuestion := normalizeText(question)
 	normalizedAnswer := normalizeText(answer)
 	if normalizedQuestion == "" {
-		return VerdictIrrelevant, nil
+		return JudgeResult{Verdict: VerdictIrrelevant}, nil
 	}
 	if strings.Contains(normalizedQuestion, normalizedAnswer) ||
 		(utf8.RuneCountInString(normalizedQuestion) >= 6 && strings.Contains(normalizedAnswer, normalizedQuestion)) {
-		return VerdictCorrect, nil
+		return JudgeResult{Verdict: VerdictCorrect}, nil
 	}
 	if strings.Contains(normalizedQuestion, "接近") || strings.Contains(normalizedQuestion, "是不是") {
-		return VerdictClose, nil
+		return JudgeResult{Verdict: VerdictClose}, nil
 	}
-	return VerdictNo, nil
+	return JudgeResult{Verdict: VerdictNo}, nil
 }
 
 func normalizeText(value string) string {

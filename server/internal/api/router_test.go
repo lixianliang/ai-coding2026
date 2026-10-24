@@ -84,12 +84,20 @@ type testJudge struct {
 	calls atomic.Int32
 }
 
-func (j *testJudge) Judge(_ context.Context, _ string, _ string, question string) (game.Verdict, error) {
+// Judge 按“我是名字，问题”提取玩家，问题含 correct/yes 时返回对应判定。
+func (j *testJudge) Judge(_ context.Context, _ string, _ string, question string) (game.JudgeResult, error) {
 	j.calls.Add(1)
-	if strings.Contains(question, "correct") {
-		return game.VerdictCorrect, nil
+	player := ""
+	if rest, ok := strings.CutPrefix(question, "我是"); ok {
+		player, question, _ = strings.Cut(rest, "，")
 	}
-	return game.VerdictNo, nil
+	switch {
+	case strings.Contains(question, "correct"):
+		return game.JudgeResult{Verdict: game.VerdictCorrect, Player: player}, nil
+	case strings.Contains(question, "yes"):
+		return game.JudgeResult{Verdict: game.VerdictYes, Player: player}, nil
+	}
+	return game.JudgeResult{Verdict: game.VerdictNo, Player: player}, nil
 }
 
 type passthroughCodec struct{}
@@ -217,6 +225,62 @@ func TestCompleteGameLifecycle(t *testing.T) {
 
 	nextDevice := dialDevice(t, server.URL, "device-2", 1, game.ProtocolVersion1)
 	readLobby(t, nextDevice)
+}
+
+func TestScoreboardRanksPlayersAndAnnouncesChampion(t *testing.T) {
+	manager, _, _ := newTestManager(t, &testJudge{}, time.Second, time.Minute)
+	server := httptest.NewServer(NewRouter(manager, nil, "secret", testLogger()))
+	t.Cleanup(server.Close)
+
+	idle := fetchScoreboard(t, server.URL, 1)
+	require.Equal(t, game.ScoreboardIdle, idle.Status)
+	require.NotNil(t, idle.Players)
+
+	conn := dialDevice(t, server.URL, "device-1", 1, game.ProtocolVersion1)
+	require.Contains(t, enterGame(t, conn), "我是小明")
+	ask := func(text string) string {
+		writeListen(t, conn, "start")
+		writeAudio(t, conn, text)
+		writeListen(t, conn, "stop")
+		return readSpeech(t, conn)
+	}
+	ask("我是小明，yes")
+	ask("我是小红，yes")
+	ask("我是小红，yes")
+	ask("yes")
+
+	playing := fetchScoreboard(t, server.URL, 1)
+	require.Equal(t, game.ScoreboardPlaying, playing.Status)
+	require.Empty(t, playing.Answer)
+	require.Equal(t, []game.PlayerScore{
+		{Name: "小红", Score: 2, Questions: 2, Yes: 2},
+		{Name: "小明", Score: 1, Questions: 1, Yes: 1},
+	}, playing.Players)
+
+	speech := ask("我是小明，correct")
+	require.True(t, strings.HasPrefix(speech, "猜对了。本局冠军是小明，得6分。汤底是："), speech)
+	require.True(t, strings.HasSuffix(speech, "本轮游戏结束。想开新一局请说“游戏继续”。"), speech)
+	require.NotContains(t, speech, "小红")
+
+	finished := fetchScoreboard(t, server.URL, 1)
+	require.Equal(t, game.ScoreboardFinished, finished.Status)
+	require.Equal(t, "小明", finished.Champion)
+	require.NotEmpty(t, finished.Answer)
+	require.Equal(t, []string{"小明", "小红"}, []string{finished.Players[0].Name, finished.Players[1].Name})
+}
+
+func fetchScoreboard(t *testing.T, serverURL string, roomID int) game.Scoreboard {
+	t.Helper()
+	resp, err := http.Get(serverURL + "/v1/rooms/" + strconv.Itoa(roomID) + "/scoreboard")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	var body struct {
+		Code int             `json:"code"`
+		Data game.Scoreboard `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.Equal(t, successCode, body.Code)
+	return body.Data
 }
 
 func TestSecondDeviceIsRejected(t *testing.T) {

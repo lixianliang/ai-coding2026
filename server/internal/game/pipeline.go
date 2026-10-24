@@ -22,6 +22,7 @@ type Pipeline struct {
 type TurnResult struct {
 	Transcript string
 	Verdict    Verdict
+	Player     string
 	Speech     string
 	PCM        []byte
 }
@@ -38,19 +39,20 @@ func (p *Pipeline) Turn(ctx context.Context, pcm []byte, surface, answer string)
 	if err != nil {
 		return TurnResult{}, err
 	}
-	verdict, err := p.judge.Judge(ctx, surface, answer, transcript)
+	judged, err := p.judge.Judge(ctx, surface, answer, transcript)
 	if err != nil {
 		return TurnResult{Transcript: transcript}, err
 	}
+	verdict := judged.Verdict
 	speech := VerdictSpeech(verdict)
 	if verdict == VerdictCorrect {
 		speech = "猜对了。汤底是：" + answer
 	}
 	audio, err := p.tts.Synthesize(ctx, speech)
 	if err != nil {
-		return TurnResult{Transcript: transcript, Verdict: verdict, Speech: speech}, err
+		return TurnResult{Transcript: transcript, Verdict: verdict, Player: judged.Player, Speech: speech}, err
 	}
-	return TurnResult{Transcript: transcript, Verdict: verdict, Speech: speech, PCM: audio}, nil
+	return TurnResult{Transcript: transcript, Verdict: verdict, Player: judged.Player, Speech: speech, PCM: audio}, nil
 }
 
 func (p *Pipeline) Transcribe(ctx context.Context, pcm []byte) (string, error) {
