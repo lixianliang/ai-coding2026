@@ -37,8 +37,8 @@ go run ./cmd/server
 
 - 每房一台设备；固定房间 `1/2/3`，第二台设备连接返回 `room is full`。
 - 每局 10 分钟，单次收音最多 60 秒。
-- BOOT 第一次按发送 `listen state=start mode=manual`；第二次按发送 `listen state=stop`。
-- `listen start` 前和 `listen stop` 后的音频丢弃；只有 `stop` 才提交 ASR。
+- AI 播报题面后，玩家之间可以直接讨论；只有需要向 AI 提问、猜测汤底或发出继续/退出指令时，BOOT 第一次按发送 `listen state=start mode=manual`，第二次按发送 `listen state=stop`。
+- `listen start` 前和 `listen stop` 后的音频丢弃；普通现场讨论不上传，只有 `stop` 才提交本次 manual 收音给 ASR。
 - 服务端用 Qwen ASR final 文本交给 DeepSeek 判定：`yes/no/close/irrelevant/correct`。
 - 判定和固定汤底都由 MiniMax 合成，编码成 Opus 下发给设备；固定汤底文本来自题库，不由 LLM 改写。
 - AI 播报时设备处于 `speaking`，忽略 BOOT；`tts stop` 后保持 `idle`。
