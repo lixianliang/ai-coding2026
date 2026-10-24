@@ -53,6 +53,6 @@ Interpret failures by stage:
 
 ## Game-chain checks
 
-Use deterministic protocol tests for manual start/stop, audio before/after capture, duplicate room rejection, verdict speech, fixed answer, discussion state, `游戏继续`, `退出游戏`, and both timeouts. Use the provider eval for real model behavior; use a physical device only for Linx MCP cutover, microphone, speaker, BOOT, and network behavior.
+Use deterministic protocol tests for the welcome prompt, `开始游戏`, manual start/stop, audio before/after capture, duplicate room rejection, verdict speech, fixed answer, discussion state, `游戏继续`, `退出游戏`, and both timeouts. Check configured question IDs, updated surface/answer text, and removal of disabled questions when changing the question bank. Use the provider eval for real model behavior; use a physical device only for Linx MCP cutover, microphone, speaker, BOOT, and network behavior.
 
 When reporting, include the exact command, pass count, and observed latency. Call out whether the result was mocked, provider-backed, browser-backed, or physical-device-backed.

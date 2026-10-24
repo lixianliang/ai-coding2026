@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -17,6 +18,25 @@ type Question struct {
 	ID      uint   `gorm:"primaryKey"`
 	Surface string `gorm:"not null"`
 	Answer  string `gorm:"not null"`
+	Enabled bool   `gorm:"not null;default:true;index"`
+}
+
+var defaultQuestions = []Question{
+	{
+		ID:      101,
+		Surface: "一根点燃的火柴掉进一杯水里，却没有熄灭。为什么？",
+		Answer:  "杯子里的水已经冻成了冰，火柴落在冰面上，没有碰到液态水。",
+	},
+	{
+		ID:      102,
+		Surface: "一位先生每天坐电梯到十楼，再走楼梯上十二楼；下雨天却直接坐到十二楼。为什么？",
+		Answer:  "他个子不高，只能按到十楼按钮；下雨天带着伞，可以用伞尖按十二楼。",
+	},
+	{
+		ID:      103,
+		Surface: "小美每天给窗边的植物浇水，它却越来越蔫；移到浴室后偶尔浇水，反而长好了。为什么？",
+		Answer:  "那是一盆喜阴喜湿的蕨类植物，窗边暴晒且浇水过多导致烂根，浴室的散射光和湿度更适合它。",
+	},
 }
 
 type GameRecord struct {
@@ -32,7 +52,10 @@ type Store struct {
 	db *gorm.DB
 }
 
-func OpenStore(path string) (*Store, error) {
+func OpenStore(path string, questions []Question) (*Store, error) {
+	if len(questions) == 0 {
+		questions = defaultQuestions
+	}
 	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %q: %w", path, err)
@@ -48,51 +71,57 @@ func OpenStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}
 	store := &Store{db: db}
-	if err := store.seed(context.Background()); err != nil {
+	if err := store.seed(context.Background(), questions); err != nil {
 		return nil, err
 	}
 	return store, nil
 }
 
-func (s *Store) seed(ctx context.Context) error {
-	var count int64
-	if err := s.db.WithContext(ctx).Model(&Question{}).Count(&count).Error; err != nil {
-		return fmt.Errorf("count questions: %w", err)
+func (s *Store) seed(ctx context.Context, questions []Question) error {
+	ids := make([]uint, 0, len(questions))
+	seen := make(map[uint]struct{}, len(questions))
+	for index := range questions {
+		question := &questions[index]
+		if question.ID == 0 || question.Surface == "" || question.Answer == "" {
+			return errors.New("question id, surface, and answer are required")
+		}
+		if _, exists := seen[question.ID]; exists {
+			return fmt.Errorf("duplicate question id %d", question.ID)
+		}
+		seen[question.ID] = struct{}{}
+		question.Enabled = true
+		ids = append(ids, question.ID)
 	}
-	if count > 0 {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Question{}).Where("id NOT IN ?", ids).Update("enabled", false).Error; err != nil {
+			return fmt.Errorf("disable removed questions: %w", err)
+		}
+		if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&questions).Error; err != nil {
+			return fmt.Errorf("upsert questions: %w", err)
+		}
 		return nil
-	}
-	questions := []Question{
-		{
-			Surface: "一个人走进餐厅，点了一碗海龟汤，喝了一口就哭了。为什么？",
-			Answer:  "他认出这是失踪多年的母亲做的味道，而母亲已经去世。",
-		},
-		{
-			Surface: "男人每天深夜都乘电梯到十三楼，再走楼梯回家。为什么？",
-			Answer:  "十三楼是他已故妻子的家，电梯无法直达，他只能用这种方式纪念她。",
-		},
-		{
-			Surface: "女孩在生日当天收到一张空白贺卡，却立刻报了警。为什么？",
-			Answer:  "寄卡人只会写盲文，这证明失踪的姐姐还活着并留下了求救信息。",
-		},
-	}
-	if err := s.db.WithContext(ctx).Create(&questions).Error; err != nil {
-		return fmt.Errorf("seed questions: %w", err)
-	}
-	return nil
+	})
 }
 
 func (s *Store) NextQuestion(ctx context.Context, excludeID uint) (Question, error) {
 	var question Question
-	query := s.db.WithContext(ctx).Order("RANDOM()")
+	query := s.db.WithContext(ctx).Where("enabled = ?", true).Order("RANDOM()")
 	if excludeID != 0 {
 		query = query.Where("id <> ?", excludeID)
 	}
-	if err := query.First(&question).Error; err != nil {
+	if err := query.First(&question).Error; err == nil {
+		return question, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return Question{}, fmt.Errorf("select question: %w", err)
+	}
+	if excludeID == 0 {
+		return Question{}, errors.New("question bank is empty")
+	}
+	if err := s.db.WithContext(ctx).Where("enabled = ?", true).Order("RANDOM()").First(&question).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return Question{}, errors.New("question bank is empty")
 		}
-		return Question{}, fmt.Errorf("select question: %w", err)
+		return Question{}, fmt.Errorf("select fallback question: %w", err)
 	}
 	return question, nil
 }

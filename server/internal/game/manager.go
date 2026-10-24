@@ -27,10 +27,14 @@ const (
 
 var (
 	exitPhrases     = []string{"退出游戏", "退出房间", "不玩了"}
+	startPhrases    = []string{"开始游戏", "开始新游戏", "新游戏"}
 	continuePhrases = []string{"游戏继续", "继续游戏", "再来一局", "下一局", "继续玩"}
 )
 
-const finishedPrompt = "大家可以讨论，想开新一局请说“游戏继续”。"
+const (
+	lobbyPrompt    = "欢迎来到海龟汤。请说“开始游戏”开始新一局；一局结束后说“游戏继续”；随时说“退出游戏”离开。"
+	finishedPrompt = "大家可以讨论，想开新一局请说“游戏继续”。"
+)
 
 type Deps struct {
 	Store        *Store
@@ -297,6 +301,7 @@ type roomPhase uint8
 
 const (
 	phaseIdle roomPhase = iota
+	phaseLobby
 	phaseHosting
 	phaseAwaitingQuestion
 	phaseListening
@@ -307,7 +312,8 @@ const (
 type speechAction uint8
 
 const (
-	actionOpenQuestions speechAction = iota
+	actionWaitStart speechAction = iota
+	actionOpenQuestions
 	actionFinishGame
 )
 
@@ -441,11 +447,7 @@ func (r *room) handleJoin(command roomCommand) {
 		return
 	}
 	r.client = client
-	if err := r.startGame(); err != nil {
-		r.client = nil
-		command.ack <- err
-		return
-	}
+	r.beginSpeech(lobbyPrompt, actionWaitStart, "")
 	command.ack <- nil
 }
 
@@ -468,7 +470,8 @@ func (r *room) handleLeave(client *client) {
 }
 
 func (r *room) handleListenStart(client *client) {
-	if r.client != client || r.active != nil || (r.phase != phaseAwaitingQuestion && r.phase != phaseFinished) {
+	if r.client != client || r.active != nil ||
+		(r.phase != phaseLobby && r.phase != phaseAwaitingQuestion && r.phase != phaseFinished) {
 		return
 	}
 	r.discussion = r.phase == phaseFinished
@@ -508,6 +511,11 @@ func (r *room) returnToIdle() {
 	r.capturing = false
 	r.active = nil
 	r.partial = ""
+	if r.current == nil {
+		r.discussion = false
+		r.phase = phaseLobby
+		return
+	}
 	if r.discussion {
 		r.discussion = false
 		r.phase = phaseFinished
@@ -545,13 +553,24 @@ func (r *room) handleASREvent(client *client, event ASREvent) {
 		if r.discussion {
 			r.discussion = false
 			r.phase = phaseFinished
-			if isContinuePhrase(event.Text) {
+			if isStartPhrase(event.Text) || isContinuePhrase(event.Text) {
 				r.partial = ""
 				if err := r.startGame(); err != nil {
 					r.deps.Logger.Error("start next game", "room_id", r.id, "error", err)
 				}
+			}
+			return
+		}
+		if r.current == nil {
+			r.partial = ""
+			if isStartPhrase(event.Text) || isContinuePhrase(event.Text) {
+				if err := r.startGame(); err != nil {
+					r.deps.Logger.Error("start game", "room_id", r.id, "error", err)
+					r.phase = phaseLobby
+				}
 				return
 			}
+			r.beginSpeech(lobbyPrompt, actionWaitStart, "")
 			return
 		}
 		r.finishTurn(client, event.Text)
@@ -657,9 +676,6 @@ func (r *room) startGame() error {
 }
 
 func (r *room) beginSpeech(text string, action speechAction, winner string) {
-	if r.current == nil {
-		return
-	}
 	client := r.client
 	r.phase = phaseHosting
 	r.active = nil
@@ -710,6 +726,10 @@ func sendPacedAudio(client *client, packets [][]byte) {
 
 func (r *room) handleSpeechDone(seq uint64) {
 	if seq != r.speechSeq || r.phase != phaseHosting {
+		return
+	}
+	if r.speechAction == actionWaitStart {
+		r.phase = phaseLobby
 		return
 	}
 	if r.speechAction == actionFinishGame {
@@ -767,6 +787,15 @@ func formatSpokenAnswer(answer string) string {
 
 func isExitPhrase(text string) bool {
 	for _, phrase := range exitPhrases {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func isStartPhrase(text string) bool {
+	for _, phrase := range startPhrases {
 		if strings.Contains(text, phrase) {
 			return true
 		}

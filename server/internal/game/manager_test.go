@@ -7,7 +7,7 @@ import (
 )
 
 func TestReturnToIdleFromDiscussion(t *testing.T) {
-	room := &room{phase: phaseListening, discussion: true, capturing: true, active: &client{}, partial: "partial"}
+	room := &room{phase: phaseListening, discussion: true, capturing: true, active: &client{}, current: &activeGame{}, partial: "partial"}
 
 	room.returnToIdle()
 
@@ -19,7 +19,7 @@ func TestReturnToIdleFromDiscussion(t *testing.T) {
 }
 
 func TestReturnToIdleDuringRound(t *testing.T) {
-	room := &room{phase: phaseListening, capturing: true, active: &client{}}
+	room := &room{phase: phaseListening, capturing: true, active: &client{}, current: &activeGame{}}
 
 	room.returnToIdle()
 
@@ -28,8 +28,21 @@ func TestReturnToIdleDuringRound(t *testing.T) {
 	require.Nil(t, room.active)
 }
 
+func TestReturnToIdleFromLobby(t *testing.T) {
+	room := &room{phase: phaseListening, capturing: true, active: &client{}}
+
+	room.returnToIdle()
+
+	require.Equal(t, phaseLobby, room.phase)
+	require.False(t, room.capturing)
+	require.Nil(t, room.active)
+}
+
 func TestPhraseMatching(t *testing.T) {
 	require.True(t, isExitPhrase("那我先退出游戏吧"))
 	require.True(t, isContinuePhrase("我们游戏继续"))
 	require.False(t, isContinuePhrase("这局还没讨论完"))
+	require.True(t, isStartPhrase("开始游戏"))
+	require.True(t, isStartPhrase("那就开始新游戏吧"))
+	require.False(t, isStartPhrase("还没准备好"))
 }

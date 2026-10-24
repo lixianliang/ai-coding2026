@@ -4,6 +4,23 @@
   "device_token": "",
   "turn_duration_seconds": 60,
   "game_duration_seconds": 600,
+  "questions": [
+    {
+      "id": 101,
+      "surface": "一根点燃的火柴掉进一杯水里，却没有熄灭。为什么？",
+      "answer": "杯子里的水已经冻成了冰，火柴落在冰面上，没有碰到液态水。"
+    },
+    {
+      "id": 102,
+      "surface": "一位先生每天坐电梯到十楼，再走楼梯上十二楼；下雨天却直接坐到十二楼。为什么？",
+      "answer": "他个子不高，只能按到十楼按钮；下雨天带着伞，可以用伞尖按十二楼。"
+    },
+    {
+      "id": 103,
+      "surface": "小美每天给窗边的植物浇水，它却越来越蔫；移到浴室后偶尔浇水，反而长好了。为什么？",
+      "answer": "那是一盆喜阴喜湿的蕨类植物，窗边暴晒且浇水过多导致烂根，浴室的散射光和湿度更适合它。"
+    }
+  ],
   "asr": {
     "api_key": "replace-with-qwen-api-key",
     "url": "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
