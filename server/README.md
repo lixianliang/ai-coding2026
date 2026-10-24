@@ -40,6 +40,7 @@ go run ./cmd/server
 - 每局 10 分钟，单次收音最多 60 秒。
 - Game WSS 入房后先播放欢迎提示，不自动开局；玩家按 BOOT 说“开始游戏”后才朗读汤面。
 - AI 播报题面后，玩家之间可以直接讨论；只有需要向 AI 提问、猜测汤底或发出继续/退出指令时，BOOT 第一次按发送 `listen state=start mode=manual`，第二次按发送 `listen state=stop`。
+- 游戏进行中如果忘记汤面，可以说“再说一遍汤面”或“重复一下汤面”；服务端重播当前固定题面，不进入判题。
 - `listen start` 前和 `listen stop` 后的音频丢弃；普通现场讨论不上传，只有 `stop` 才提交本次 manual 收音给 ASR。
 - 服务端用 Qwen ASR final 文本交给 DeepSeek 判定：`yes/no/close/irrelevant/correct`。
 - 判定和固定汤底都由 MiniMax 流式合成；PCM 分片边到边编码成 Opus，前 5 帧预缓冲后按 60 ms/帧下发，尾帧全部发完才发送 `tts stop`。固定汤底文本来自题库，不由 LLM 改写。
