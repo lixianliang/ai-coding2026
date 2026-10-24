@@ -117,6 +117,25 @@ func TestHealthAndAuthResponses(t *testing.T) {
 	require.Contains(t, string(body), `"code":40100`)
 }
 
+func TestLobbyWaitsForStartCommand(t *testing.T) {
+	judge := &testJudge{}
+	manager, _, _ := newTestManager(t, judge, time.Second, time.Minute)
+	server := httptest.NewServer(NewRouter(manager, nil, "secret", testLogger()))
+	t.Cleanup(server.Close)
+
+	conn := dialDevice(t, server.URL, "device-1", 1, game.ProtocolVersion1)
+	readLobby(t, conn)
+
+	writeListen(t, conn, "start")
+	writeAudio(t, conn, "final:随便聊聊")
+	writeListen(t, conn, "stop")
+	require.Contains(t, readSpeech(t, conn), "开始游戏")
+	require.Zero(t, judge.calls.Load())
+
+	surface := startGame(t, conn)
+	require.Contains(t, surface, "为什么")
+}
+
 func TestManualListenFinalizesOnlyOnStop(t *testing.T) {
 	judge := &testJudge{}
 	manager, _, asr := newTestManager(t, judge, time.Second, time.Minute)
@@ -124,12 +143,12 @@ func TestManualListenFinalizesOnlyOnStop(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	conn := dialDevice(t, server.URL, "device-1", 1, game.ProtocolVersion1)
-	readSpeech(t, conn)
+	enterGame(t, conn)
 
 	writeListen(t, conn, "start")
 	writeAudio(t, conn, "final:no")
 	require.Never(t, func() bool { return judge.calls.Load() != 0 }, 100*time.Millisecond, 10*time.Millisecond)
-	require.Equal(t, int32(1), asr.pushes.Load())
+	require.Equal(t, int32(2), asr.pushes.Load())
 
 	writeListen(t, conn, "stop")
 	require.Eventually(t, func() bool { return judge.calls.Load() == 1 }, time.Second, 10*time.Millisecond)
@@ -143,12 +162,13 @@ func TestAudioBeforeListenStartIsIgnored(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	conn := dialDevice(t, server.URL, "device-1", 1, game.ProtocolVersion1)
-	readSpeech(t, conn)
+	enterGame(t, conn)
+	before := asr.pushes.Load()
 	writeAudio(t, conn, "final:correct")
 
 	writeListen(t, conn, "start")
 	writeListen(t, conn, "stop")
-	require.Zero(t, asr.pushes.Load())
+	require.Equal(t, before, asr.pushes.Load())
 	require.Zero(t, judge.calls.Load())
 
 	writeListen(t, conn, "start")
@@ -160,12 +180,12 @@ func TestAudioBeforeListenStartIsIgnored(t *testing.T) {
 
 func TestCompleteGameLifecycle(t *testing.T) {
 	judge := &testJudge{}
-	manager, _, asr := newTestManager(t, judge, time.Second, time.Minute)
+	manager, _, _ := newTestManager(t, judge, time.Second, time.Minute)
 	server := httptest.NewServer(NewRouter(manager, nil, "secret", testLogger()))
 	t.Cleanup(server.Close)
 
 	conn := dialDevice(t, server.URL, "device-1", 1, game.ProtocolVersion1)
-	readSpeech(t, conn)
+	enterGame(t, conn)
 
 	writeListen(t, conn, "start")
 	writeAudio(t, conn, "final:correct")
@@ -180,17 +200,12 @@ func TestCompleteGameLifecycle(t *testing.T) {
 	writeAudio(t, conn, "final:discuss")
 	writeListen(t, conn, "stop")
 	require.Never(t, func() bool { return judge.calls.Load() != 1 }, 100*time.Millisecond, 10*time.Millisecond)
-	require.Eventually(t, func() bool {
-		if asr.finalizes.Load() >= 3 {
-			return true
-		}
-		writeListen(t, conn, "start")
-		writeAudio(t, conn, "游戏继续")
-		writeListen(t, conn, "stop")
-		return false
-	}, time.Second, 20*time.Millisecond)
+
+	writeListen(t, conn, "start")
+	writeAudio(t, conn, "游戏继续")
+	writeListen(t, conn, "stop")
 	next := readSpeech(t, conn)
-	require.NotContains(t, next, "猜对了。汤底是：")
+	require.Contains(t, next, "为什么")
 	require.Equal(t, int32(1), judge.calls.Load())
 
 	writeListen(t, conn, "start")
@@ -201,7 +216,7 @@ func TestCompleteGameLifecycle(t *testing.T) {
 	require.Error(t, err)
 
 	nextDevice := dialDevice(t, server.URL, "device-2", 1, game.ProtocolVersion1)
-	readSpeech(t, nextDevice)
+	readLobby(t, nextDevice)
 }
 
 func TestSecondDeviceIsRejected(t *testing.T) {
@@ -210,7 +225,7 @@ func TestSecondDeviceIsRejected(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	first := dialDevice(t, server.URL, "device-1", 1, game.ProtocolVersion1)
-	readSpeech(t, first)
+	readLobby(t, first)
 	second := dialDevice(t, server.URL, "device-2", 1, game.ProtocolVersion1)
 
 	require.NoError(t, second.SetReadDeadline(time.Now().Add(time.Second)))
@@ -227,7 +242,7 @@ func TestTurnAndGameTimeouts(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		conn := dialDevice(t, server.URL, "device-1", 1, game.ProtocolVersion1)
-		readSpeech(t, conn)
+		enterGame(t, conn)
 		writeListen(t, conn, "start")
 		writeAudio(t, conn, "final:no")
 		require.Eventually(t, func() bool { return judge.calls.Load() == 1 }, time.Second, 10*time.Millisecond)
@@ -239,7 +254,7 @@ func TestTurnAndGameTimeouts(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		conn := dialDevice(t, server.URL, "device-1", 1, game.ProtocolVersion1)
-		readSpeech(t, conn)
+		enterGame(t, conn)
 		speech := readSpeech(t, conn)
 		require.Contains(t, speech, "时间到。本局汤底是：")
 	})
@@ -250,7 +265,7 @@ func TestTurnAndGameTimeouts(t *testing.T) {
 		t.Cleanup(server.Close)
 
 		conn := dialDevice(t, server.URL, "device-1", 1, game.ProtocolVersion1)
-		readSpeech(t, conn)
+		enterGame(t, conn)
 		writeListen(t, conn, "start")
 		speech := readSpeech(t, conn)
 		require.Contains(t, speech, "时间到。本局汤底是：")
@@ -263,7 +278,7 @@ func TestExitGameReleasesRoom(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	first := dialDevice(t, server.URL, "device-1", 1, game.ProtocolVersion1)
-	readSpeech(t, first)
+	readLobby(t, first)
 	writeListen(t, first, "start")
 	writeAudio(t, first, "退出游戏")
 	writeListen(t, first, "stop")
@@ -273,12 +288,12 @@ func TestExitGameReleasesRoom(t *testing.T) {
 	require.Error(t, err)
 
 	second := dialDevice(t, server.URL, "device-2", 1, game.ProtocolVersion1)
-	readSpeech(t, second)
+	readLobby(t, second)
 }
 
 func newTestManager(t *testing.T, judge game.Judge, turnDuration, gameDuration time.Duration) (*game.Manager, *game.Store, *scriptedASR) {
 	t.Helper()
-	store, err := game.OpenStore(":memory:")
+	store, err := game.OpenStore(":memory:", nil)
 	require.NoError(t, err)
 	asr := &scriptedASR{}
 	manager, err := game.NewManager(game.Deps{
@@ -301,6 +316,29 @@ func newTestManager(t *testing.T, judge game.Judge, turnDuration, gameDuration t
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func readLobby(t *testing.T, conn *websocket.Conn) string {
+	t.Helper()
+	speech := readSpeech(t, conn)
+	require.Contains(t, speech, "开始游戏")
+	require.Contains(t, speech, "游戏继续")
+	require.Contains(t, speech, "退出游戏")
+	return speech
+}
+
+func startGame(t *testing.T, conn *websocket.Conn) string {
+	t.Helper()
+	writeListen(t, conn, "start")
+	writeAudio(t, conn, "开始游戏")
+	writeListen(t, conn, "stop")
+	return readSpeech(t, conn)
+}
+
+func enterGame(t *testing.T, conn *websocket.Conn) string {
+	t.Helper()
+	readLobby(t, conn)
+	return startGame(t, conn)
 }
 
 func dialDevice(t *testing.T, serverURL, deviceID string, roomID int, version game.ProtocolVersion) *websocket.Conn {

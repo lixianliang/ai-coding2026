@@ -27,14 +27,21 @@ const (
 )
 
 type Config struct {
-	Address             string    `json:"address"`
-	Database            string    `json:"database"`
-	DeviceToken         string    `json:"device_token"`
-	TurnDurationSeconds int       `json:"turn_duration_seconds"`
-	GameDurationSeconds int       `json:"game_duration_seconds"`
-	ASR                 ASRConfig `json:"asr"`
-	LLM                 LLMConfig `json:"llm"`
-	TTS                 TTSConfig `json:"tts"`
+	Address             string           `json:"address"`
+	Database            string           `json:"database"`
+	DeviceToken         string           `json:"device_token"`
+	TurnDurationSeconds int              `json:"turn_duration_seconds"`
+	GameDurationSeconds int              `json:"game_duration_seconds"`
+	ASR                 ASRConfig        `json:"asr"`
+	LLM                 LLMConfig        `json:"llm"`
+	TTS                 TTSConfig        `json:"tts"`
+	Questions           []QuestionConfig `json:"questions"`
+}
+
+type QuestionConfig struct {
+	ID      uint   `json:"id"`
+	Surface string `json:"surface"`
+	Answer  string `json:"answer"`
 }
 
 type ASRConfig struct {
@@ -130,6 +137,16 @@ func (c *Config) applyDefaults() {
 }
 
 func (c Config) validate() error {
+	seenQuestions := make(map[uint]struct{}, len(c.Questions))
+	for _, question := range c.Questions {
+		if question.ID == 0 || strings.TrimSpace(question.Surface) == "" || strings.TrimSpace(question.Answer) == "" {
+			return errors.New("questions require id, surface, and answer")
+		}
+		if _, exists := seenQuestions[question.ID]; exists {
+			return fmt.Errorf("duplicate question id %d", question.ID)
+		}
+		seenQuestions[question.ID] = struct{}{}
+	}
 	if c.ASR.APIKey == "" {
 		return errors.New("asr.api_key is required")
 	}

@@ -45,7 +45,11 @@ func run(logger *slog.Logger) error {
 			return err
 		}
 	}
-	store, err := game.OpenStore(cfg.Database)
+	questions := make([]game.Question, len(cfg.Questions))
+	for index, question := range cfg.Questions {
+		questions[index] = game.Question{ID: question.ID, Surface: question.Surface, Answer: question.Answer}
+	}
+	store, err := game.OpenStore(cfg.Database, questions)
 	if err != nil {
 		return err
 	}

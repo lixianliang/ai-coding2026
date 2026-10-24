@@ -7,6 +7,8 @@ description: Verify and submit changes in this ai-coding2026 repository through 
 
 Ship only the changes the current request produced. Do not "clean up" or include unrelated working-tree changes.
 
+Every change to this repository must land through a `codex/*` branch and a pull request. Never commit or push directly to `main`, including docs and skill-only changes.
+
 ## Workflow
 
 1. Read the root and nearest `AGENTS.md`. Inspect `git status --short`, the current branch, and `git remote -v`.
@@ -52,6 +54,7 @@ Ship only the changes the current request produced. Do not "clean up" or include
 
 ## Guardrails
 
+- Never commit or push directly to `main`.
 - Leave unrelated modified and untracked files out of the index and commit.
 - Do not commit credentials, local device configuration, databases, logs, or build artifacts.
 - Do not claim hardware, cloud-provider, or end-to-end validation unless it was actually run.

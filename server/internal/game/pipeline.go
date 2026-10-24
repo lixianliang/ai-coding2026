@@ -11,10 +11,7 @@ const (
 	pipelineChunkBytes = AudioSampleRate * AudioFrameDuration / 1000 * pcmSampleBytes
 )
 
-var TurtleSoupDemo = Question{
-	Surface: "一个人走进餐厅，点了一碗海龟汤，喝了一口就哭了。为什么？",
-	Answer:  "汤的味道让他想起已经去世的母亲，他因为思念母亲而哭。",
-}
+var TurtleSoupDemo = defaultQuestions[0]
 
 type Pipeline struct {
 	asr   ASR

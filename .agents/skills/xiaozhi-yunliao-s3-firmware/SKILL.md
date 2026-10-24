@@ -80,7 +80,9 @@ Es8388AudioCodec initialized
 LcdDisplay: Adding LCD display
 ```
 
-For a Game WSS acceptance, also require a real microphone utterance, BOOT start/stop, TTS playback, room entry through Linx local MCP, `游戏继续`, and `退出游戏`. Logs alone do not prove these passed.
+For a Game WSS acceptance, also require a real microphone utterance, BOOT start/stop, TTS playback, room entry through Linx local MCP, the welcome prompt, `开始游戏`, `游戏继续`, and `退出游戏`. Logs alone do not prove these passed.
+
+Firmware and acceptance-skill changes must land through a `codex/*` branch and PR; never push `main` directly.
 
 ## Known noise
 
