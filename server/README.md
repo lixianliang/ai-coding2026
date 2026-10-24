@@ -2,6 +2,8 @@
 
 固定房间 `1/2/3` 的单设备海龟汤 MVP：每房一台 `yunliao-s3`，玩家围坐共享设备与 AI 主持人；玩家按 BOOT 开始收音，再按一次结束。设备继续使用现有 `hello`、`listen`、`tts` 控制消息和 Opus 音频格式。
 
+设备固件基于开源项目 `xiaozhi-esp32`，普通设备服务由 Linx 提供：Linx 负责 OTA、设备激活、入口对话和设备本地 MCP。`self.game.start(room_id)` 被 Linx 智能体调用并返回受理结果后，设备关闭 Linx 音频连接，按 `room_id` 连接本 Go 服务的 Game WSS。Go 服务是独立的游戏服务端，不提供 XiaoZhi 通用对话，也不承载游戏大厅；游戏连接结束后设备回到 idle，后续唤醒再重新连接 Linx。
+
 ```text
 设备 Opus ──► Go 解码 PCM ──► Qwen Realtime ASR（manual commit）
                                       │

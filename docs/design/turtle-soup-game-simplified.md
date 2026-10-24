@@ -4,6 +4,14 @@
 
 ## 1. 方案结论
 
+### 1.1 上游固件与服务端关系
+
+`xiaozhi-esp32` 是开源的 XiaoZhi ESP32 固件项目，负责设备端的音频采集、Opus 编解码、播放、按键、网络连接和 MCP 工具执行。本仓库不重新实现一套设备固件，而是在该开源项目上通过一个小范围 PR 增加海龟汤所需的能力：注册 `self.game.start(room_id)`、切换 Game WSS 地址，以及将游戏收音切换为 manual start/stop 模式。
+
+这里的 Linx 可以理解为 XiaoZhi 固件配置连接的服务端。固件通常通过 OTA 下发或保存 Linx 的 WebSocket 配置，Linx 负责设备激活、OTA、唤醒后的普通入口对话和设备端 MCP 调用。玩家说“进入 2 号房玩海龟汤”时，Linx 智能体识别意图并调用设备本地 MCP；MCP 返回受理结果后，设备关闭当前 Linx 音频连接，使用临时 URL 连接独立的 Go Game WSS。
+
+Linx 与 Go 游戏服务是两个独立的服务端角色：Linx 负责 XiaoZhi 的通用设备服务和入口对话，Go 只负责进入指定房间后的题目、收音、ASR、判题、TTS 和房间状态。Game WSS 不替换固件，也不要求 Linx 承载游戏期间的连续音频；游戏连接结束后，设备回到 idle，下一次唤醒再按 XiaoZhi 的配置重新连接 Linx。
+
 ```text
 ESP32-S3（yunliao-s3）
   ├─ Linx WSS：OTA、唤醒、入口对话、设备本地 MCP
@@ -213,5 +221,4 @@ AI 只做主持，不拥有答案：
 - [Linx OTA](https://linx.qiniu.com/docs/xrobot/platform/OTA)
 - [Linx WebSocket 协议](https://linx.qiniu.com/docs/xrobot/platform/websocket)
 - [Linx 设备端 MCP](https://linx.qiniu.com/docs/xrobot/mcp/hardware-mcp)
-- [Linx 云端 MCP](https://linx.qiniu.com/docs/xrobot/mcp/software-mcp)
-- [Qwen Realtime ASR](https://help.aliyun.com/zh/model-studio/qwen-asr-realtime)
+- [Qwen Realtime ASR API](https://help.aliyun.com/zh/model-studio/qwen-asr-realtime-api/?spm=a2c4g.11186623.help-menu-2400256.d_2_6_3_0_3.620e3274Dn7gft)
