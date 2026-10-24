@@ -173,4 +173,6 @@ func TestPhraseMatching(t *testing.T) {
 	require.True(t, isStartPhrase("开始游戏"))
 	require.True(t, isStartPhrase("那就开始新游戏吧"))
 	require.False(t, isStartPhrase("还没准备好"))
+	require.True(t, isRepeatSurfacePhrase("我忘了，再说一遍汤面"))
+	require.False(t, isRepeatSurfacePhrase("请回答这个问题"))
 }

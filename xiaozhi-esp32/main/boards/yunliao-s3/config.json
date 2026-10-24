@@ -5,7 +5,8 @@
         {
             "name": "yunliao-s3",
             "sdkconfig_append": [
-                "CONFIG_USE_DEVICE_AEC=y"
+                "CONFIG_USE_DEVICE_AEC=y",
+                "CONFIG_USE_MULTILINE_CHAT_MESSAGE=y"
             ]
         }
     ]

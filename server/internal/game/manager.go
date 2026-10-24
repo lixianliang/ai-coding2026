@@ -26,9 +26,10 @@ const (
 )
 
 var (
-	exitPhrases     = []string{"退出游戏", "退出房间", "不玩了"}
-	startPhrases    = []string{"开始游戏", "开始新游戏", "新游戏"}
-	continuePhrases = []string{"游戏继续", "继续游戏", "再来一局", "下一局", "继续玩"}
+	exitPhrases          = []string{"退出游戏", "退出房间", "不玩了"}
+	startPhrases         = []string{"开始游戏", "开始新游戏", "新游戏"}
+	continuePhrases      = []string{"游戏继续", "继续游戏", "再来一局", "下一局", "继续玩"}
+	repeatSurfacePhrases = []string{"再说一遍汤面", "重复一下汤面", "再播一遍汤面", "汤面再说一遍", "忘了汤面"}
 )
 
 const (
@@ -596,6 +597,10 @@ func (r *room) handleASREvent(client *client, event ASREvent) {
 			r.beginSpeech(lobbyPrompt, actionWaitStart, "")
 			return
 		}
+		if isRepeatSurfacePhrase(event.Text) {
+			r.beginSpeech(r.current.question.Surface, actionOpenQuestions, "")
+			return
+		}
 		r.finishTurn(client, event.Text)
 	}
 }
@@ -897,6 +902,15 @@ func isStartPhrase(text string) bool {
 
 func isContinuePhrase(text string) bool {
 	for _, phrase := range continuePhrases {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func isRepeatSurfacePhrase(text string) bool {
+	for _, phrase := range repeatSurfacePhrases {
 		if strings.Contains(text, phrase) {
 			return true
 		}

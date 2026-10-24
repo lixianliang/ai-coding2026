@@ -146,6 +146,19 @@ func TestLobbyWaitsForStartCommand(t *testing.T) {
 
 	surface := startGame(t, conn)
 	require.Contains(t, surface, "为什么")
+
+	writeListen(t, conn, "start")
+	writeAudio(t, conn, "我不记得了，再说一遍汤面")
+	writeListen(t, conn, "stop")
+	repeatedSurface := readSpeech(t, conn)
+	require.Contains(t, repeatedSurface, "为什么")
+	require.Zero(t, judge.calls.Load())
+
+	writeListen(t, conn, "start")
+	writeAudio(t, conn, "随便聊聊")
+	writeListen(t, conn, "stop")
+	require.Eventually(t, func() bool { return judge.calls.Load() == 1 }, time.Second, 10*time.Millisecond)
+	require.Equal(t, "不是。", readSpeech(t, conn, "随便聊聊"))
 }
 
 func TestManualListenFinalizesOnlyOnStop(t *testing.T) {
