@@ -94,10 +94,13 @@ func minimaxWebSocketURL(rawURL, groupID string) (string, error) {
 	return parsed.String(), nil
 }
 
-func (t *MiniMaxTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
+func (t *MiniMaxTTS) Stream(ctx context.Context, text string, onAudio func([]byte) error) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return nil, errors.New("minimax text is required")
+		return errors.New("minimax text is required")
+	}
+	if onAudio == nil {
+		return errors.New("minimax audio callback is required")
 	}
 	ctx, cancel := context.WithTimeout(ctx, minimaxSynthesisTimeout)
 	defer cancel()
@@ -106,9 +109,9 @@ func (t *MiniMaxTTS) Synthesize(ctx context.Context, text string) ([]byte, error
 	conn, response, err := t.dialer.DialContext(ctx, t.wsURL, header)
 	if err != nil {
 		if response != nil {
-			return nil, fmt.Errorf("dial minimax TTS: status %d: %w", response.StatusCode, err)
+			return fmt.Errorf("dial minimax TTS: status %d: %w", response.StatusCode, err)
 		}
-		return nil, fmt.Errorf("dial minimax TTS: %w", err)
+		return fmt.Errorf("dial minimax TTS: %w", err)
 	}
 	defer func() {
 		if err := conn.Close(); err != nil {
@@ -128,10 +131,10 @@ func (t *MiniMaxTTS) Synthesize(ctx context.Context, text string) ([]byte, error
 	}()
 	defer close(cancelWatch)
 	if err := conn.SetReadDeadline(time.Now().Add(minimaxSynthesisTimeout)); err != nil {
-		return nil, fmt.Errorf("set minimax read deadline: %w", err)
+		return fmt.Errorf("set minimax read deadline: %w", err)
 	}
 	if err := minimaxExpectEvent(conn, minimaxEventConnected); err != nil {
-		return nil, err
+		return err
 	}
 	start := map[string]any{
 		"event":          minimaxEventTaskStart,
@@ -151,49 +154,54 @@ func (t *MiniMaxTTS) Synthesize(ctx context.Context, text string) ([]byte, error
 		},
 	}
 	if err := conn.WriteJSON(start); err != nil {
-		return nil, fmt.Errorf("send minimax task_start: %w", err)
+		return fmt.Errorf("send minimax task_start: %w", err)
 	}
 	if err := minimaxExpectEvent(conn, minimaxEventStarted); err != nil {
-		return nil, err
+		return err
 	}
 	if err := conn.WriteJSON(map[string]string{"event": minimaxEventContinue, "text": text}); err != nil {
-		return nil, fmt.Errorf("send minimax task_continue: %w", err)
+		return fmt.Errorf("send minimax task_continue: %w", err)
 	}
-	var pcm []byte
+	receivedAudio := false
 	for {
 		var message minimaxResponse
 		if err := conn.ReadJSON(&message); err != nil {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return ctx.Err()
 			}
-			return nil, fmt.Errorf("read minimax TTS response: %w", err)
+			return fmt.Errorf("read minimax TTS response: %w", err)
 		}
 		if err := message.err(); err != nil {
-			return nil, err
+			return err
 		}
 		switch message.Event {
 		case minimaxEventContinued:
 			if message.Data.Audio != "" {
 				chunk, err := hex.DecodeString(message.Data.Audio)
 				if err != nil {
-					return nil, fmt.Errorf("decode minimax hex audio: %w", err)
+					return fmt.Errorf("decode minimax hex audio: %w", err)
 				}
-				pcm = append(pcm, chunk...)
+				if len(chunk) > 0 {
+					receivedAudio = true
+					if err := onAudio(chunk); err != nil {
+						return fmt.Errorf("consume minimax audio: %w", err)
+					}
+				}
 			}
 			if message.IsFinal {
 				if err := conn.WriteJSON(map[string]string{"event": minimaxEventFinish}); err != nil {
-					return nil, fmt.Errorf("send minimax task_finish: %w", err)
+					return fmt.Errorf("send minimax task_finish: %w", err)
 				}
-				if len(pcm) == 0 {
-					return nil, errors.New("minimax returned empty audio")
+				if !receivedAudio {
+					return errors.New("minimax returned empty audio")
 				}
-				return pcm, nil
+				return nil
 			}
 		case minimaxEventFinished:
-			if len(pcm) == 0 {
-				return nil, errors.New("minimax returned empty audio")
+			if !receivedAudio {
+				return errors.New("minimax returned empty audio")
 			}
-			return pcm, nil
+			return nil
 		}
 	}
 }

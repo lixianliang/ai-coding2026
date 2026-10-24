@@ -72,7 +72,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 - 连接后设备发 `hello`，服务端返回 `hello`。
 - 设备发 `listen state=start mode=manual`，随后上传 Opus 二进制帧。
 - 设备发 `listen state=stop` 后，服务端提交 Qwen ASR。
-- 服务端发 `tts state=start`，随后下发 Opus 二进制帧，最后发 `tts state=stop`。
+- 服务端发 `tts state=start`，TTS 分片边到边编码为 Opus 二进制帧，全部尾帧发完后才发 `tts state=stop`。
 - `stt`、`tts sentence_start` 只用于显示，不参与控制。
 
 房间从 Game WSS URL 的 `room_id` 查询参数确定；设备身份取握手头 `Device-Id`。房间的“开局、判题、讨论、结束”只存在于服务端，不下发成设备协议。
@@ -89,7 +89,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 
 控制约定只有三条：
 
-1. 播放：`tts start` → Opus 帧 → `tts stop`。
+1. 播放：`tts start` → 流式 Opus 帧 → 最后音频发完 → `tts stop`。
 2. 设备在 AI 播报时处于 `speaking`，BOOT 不启动新一轮收音。
 3. `tts stop` 不负责截断播放；固件等待解码队列排空后完成状态切换。
 
@@ -101,7 +101,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 
 1. 设备连接 Game WSS 后，Go 先播放欢迎提示并停在等待开局状态，不自动选题。
 2. 玩家按 BOOT 说“开始游戏”，Go 从可配置题库选一题，锁住汤面和汤底。
-3. 服务端发 `tts start`，用 AI 音色朗读汤面并提示“提问时请先报名字”，再发 `tts stop`。
+3. 服务端发 `tts start`，用 AI 音色朗读汤面并提示“提问时请先报名字”；MiniMax PCM 分片一到就编码为 Opus 匀速下发，尾帧发完再发 `tts stop`。
 4. 设备播完后回到 idle；玩家可以现场讨论，只有需要向 AI 提问或猜测汤底时才按 BOOT 开始一次 manual 收音。
 
 ### 4.2 玩家提问
@@ -111,7 +111,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 3. Qwen 的 partial 结果只用于日志或显示，不推进游戏状态。
 4. 玩家说完后再按 BOOT，设备发 `listen stop`；Go 提交当前 ASR 音频并等待 final。
 5. final 文本交给 DeepSeek，判定为 `yes / no / close / irrelevant / correct`，同时提取玩家开头自报的名字并累计积分（见 4.5）。
-6. Go 将判定结果交给 TTS，编码为 Opus 下发；播放完成后设备回 idle，玩家可以继续现场讨论。
+6. Go 将判定结果交给 TTS，边收 PCM 分片边编码为 Opus 下发；最后音频完整发出后才进入播放结束，设备回 idle，玩家可以继续现场讨论。
 
 不自己实现 VAD。当前按键 manual 模式由玩家显式按键结束收音；只有按键确认的语音才提交给 Go，ASR 中间结果由 Qwen 提供。
 
@@ -126,7 +126,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 
 - 设备 ↔ Go：Opus，16 kHz、单声道，沿用固件现有编解码。
 - Go 内部与 ASR/TTS provider：PCM 16 kHz、单声道、16-bit。
-- TTS 返回 PCM，Go 编成 Opus 下发。
+- TTS 流式返回 PCM 分片；Go 缓存不足一帧的尾部并重组为 60 ms Opus 帧，前 5 帧预缓冲后匀速下发。
 - 首版不接收或转发玩家之间的音频。
 
 ### 4.5 积分与结算页
@@ -211,28 +211,40 @@ AI 只做主持，不拥有答案：
 
 - 多设备房间、玩家语音转发、声纹、说话人分离。
 - AI 玩家、真人主持。
-- 匹配/排队大厅、积分、排行榜、多人混音。
+- 匹配/排队大厅、跨局长期排行榜、多人混音。
 - 掉线快照恢复、断线续局。
 
 ## 9. 产品与商业价值
 
-**产品定位：给桌游店、剧本杀店增加一个无需店员主持的语音加购项目。**
+**产品定位：给桌游店、剧本杀店增加一个替代一段主持工时的语音加购项目。**
 
 - 一台设备放在桌上，玩家围坐直接交流，不装 App、不拿手机。
 - 店里复用闲置包间和换场时间，AI 主持不增加排班。
-- 卖点是完整体验：现成设备、题库、自动主持、自动判题、持续运营。
+- 卖点是完整体验：现成设备、题库、自动主持、自动判题、结算页和持续运营。
 - 付费假设需用真实门店数据验证：设备采购、房间/月订阅或按局计费。
+- TTS 只在固定节点播报，不做持续闲聊，因此单局云成本受控；详细测算见产品文档。
 
 详细定位与商业假设见 [turtle-soup-product-positioning.md](turtle-soup-product-positioning.md)。
 
 ## 10. 评分维度与现场证据
 
-| 评分维度 | 评委要看到 | 现场证据 |
+| 评分维度 | 评委要看到 | 可执行证据 |
 | --- | --- | --- |
-| 商业价值 & 产品设计 50% | 谁付费、为什么持续用、现场是否好玩 | 桌游店换场场景；一台真机开局；玩家现场自然讨论；完整玩完一题；展示单局成本、第二局率和回本假设 |
+| 商业价值 & 产品设计 50% | 谁付费、为什么持续用、单店能否回本 | 一台真机完成开局；玩家现场讨论与提问；30/300 局云成本敏感性；Lite/Standard/Premium 假设；3 家门店 2 周试点指标 |
 | 架构设计 20% | 设备薄、服务端权威、协议简单 | Linx 入口与 Game WSS 分工；固定房间；复用 `hello/listen/tts/Opus`；没有自定义 waiting 状态机 |
 | AI 价值呈现 15% | AI 真正承担主持人工作 | 自然语言选房/继续/退出；理解不同问法并判定；固定汤底由 AI 音色朗读 |
-| AI 工程效率 15% | AI 参与研发且有可重复回归 | 判题评测、完整语音链路评测、manual 协议自动测试、硬件构建/烧录 skill、Go 测试与 provider 调试 skill |
+| AI 工程效率 15% | AI 参与研发且能重复验证 | 判题评测集；云端语音链路评测；manual 与游戏状态回归；流式音频完整性测试；Go 静态检查、race 测试；硬件调试、provider 调试和 PR skills |
+
+分层验证：
+
+| 层次 | 验证内容 | 证据入口 |
+| --- | --- | --- |
+| 业务正确性 | 自然语言判题、玩家提取、固定汤底不被改写 | `go run ./cmd/eval` |
+| 云端语音链 | Qwen ASR → DeepSeek 判题 → MiniMax TTS | `go run ./cmd/eval -e2e` |
+| 游戏回归 | 显式开始、manual start/stop、未开始收音忽略、猜中、讨论态、继续、退出、回合/整局超时、第二台设备拒绝 | `server/internal/api/router_test.go` |
+| 音频完整性 | provider 完成前流式返回、任意 PCM 边界、尾部 Flush、尾帧发完才 `tts stop`、中途失败不伪成功 | `server/internal/game/manager_test.go`、`tts_minimax_test.go` |
+| 工程质量 | 格式、静态分析、竞态与全部单测 | `gofmt`、`go vet`、`go test -race`、`staticcheck` |
+| AI 工程效率 | 真机调试、provider 排障、提交与 PR 流程可复用 | 仓库内对应 skills 与根 `AGENTS.md` |
 
 ## 11. 3 分钟 Demo
 

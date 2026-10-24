@@ -71,8 +71,11 @@ func main() {
 			judged, err = judge.Judge(ctx, game.TurtleSoupDemo.Surface, game.TurtleSoupDemo.Answer, transcript)
 			got, gotPlayer = judged.Verdict, judged.Player
 		} else {
-			var audio []byte
-			audio, err = tts.Synthesize(ctx, test.utterance)
+			audio := make([]byte, 0)
+			err = tts.Stream(ctx, test.utterance, func(chunk []byte) error {
+				audio = append(audio, chunk...)
+				return nil
+			})
 			if err == nil {
 				var result game.TurnResult
 				result, err = pipeline.Turn(ctx, audio, game.TurtleSoupDemo.Surface, game.TurtleSoupDemo.Answer)

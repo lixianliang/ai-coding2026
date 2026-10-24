@@ -13,8 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMiniMaxSynthesizeDecodesHexAudio(t *testing.T) {
+func TestMiniMaxStreamsAudioBeforeTaskFinished(t *testing.T) {
 	handlerDone := make(chan error, 1)
+	firstAudio := make(chan struct{})
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -53,9 +54,22 @@ func TestMiniMaxSynthesizeDecodesHexAudio(t *testing.T) {
 			return
 		}
 		if err := conn.WriteJSON(map[string]any{
+			"event": minimaxEventContinued,
+			"data":  map[string]string{"audio": "0102"},
+		}); err != nil {
+			handlerDone <- err
+			return
+		}
+		select {
+		case <-firstAudio:
+		case <-time.After(time.Second):
+			handlerDone <- fmt.Errorf("first audio was not streamed before task completion")
+			return
+		}
+		if err := conn.WriteJSON(map[string]any{
 			"event":    minimaxEventContinued,
 			"is_final": true,
-			"data":     map[string]string{"audio": "0102"},
+			"data":     map[string]string{"audio": "0304"},
 		}); err != nil {
 			handlerDone <- err
 			return
@@ -71,9 +85,79 @@ func TestMiniMaxSynthesizeDecodesHexAudio(t *testing.T) {
 	tts, err := NewMiniMaxTTS("key", wsURL, "model", "voice", "", 1, 1, 0)
 	require.NoError(t, err)
 
-	pcm, err := tts.Synthesize(context.Background(), "你好")
+	var chunks [][]byte
+	err = tts.Stream(context.Background(), "你好", func(chunk []byte) error {
+		chunks = append(chunks, chunk)
+		if len(chunks) == 1 {
+			close(firstAudio)
+		}
+		return nil
+	})
 
 	require.NoError(t, err)
-	require.Equal(t, []byte{0x01, 0x02}, pcm)
+	require.Equal(t, [][]byte{{0x01, 0x02}, {0x03, 0x04}}, chunks)
+	require.NoError(t, <-handlerDone)
+}
+
+func TestMiniMaxStreamReportsConnectionFailureAfterPartialAudio(t *testing.T) {
+	handlerDone := make(chan error, 1)
+	firstAudio := make(chan struct{})
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			handlerDone <- err
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if err := conn.WriteJSON(map[string]string{"event": minimaxEventConnected}); err != nil {
+			handlerDone <- err
+			return
+		}
+		var message struct {
+			Event string `json:"event"`
+		}
+		if err := conn.ReadJSON(&message); err != nil || message.Event != minimaxEventTaskStart {
+			handlerDone <- fmt.Errorf("read task_start: %v, event %q", err, message.Event)
+			return
+		}
+		if err := conn.WriteJSON(map[string]string{"event": minimaxEventStarted}); err != nil {
+			handlerDone <- err
+			return
+		}
+		if err := conn.ReadJSON(&message); err != nil || message.Event != minimaxEventContinue {
+			handlerDone <- fmt.Errorf("read task_continue: %v, event %q", err, message.Event)
+			return
+		}
+		if err := conn.WriteJSON(map[string]any{
+			"event": minimaxEventContinued,
+			"data":  map[string]string{"audio": "0102"},
+		}); err != nil {
+			handlerDone <- err
+			return
+		}
+		select {
+		case <-firstAudio:
+			handlerDone <- nil
+		case <-time.After(time.Second):
+			handlerDone <- fmt.Errorf("partial audio was not streamed before disconnect")
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + minimaxTTSURLPath
+	tts, err := NewMiniMaxTTS("key", wsURL, "model", "voice", "", 1, 1, 0)
+	require.NoError(t, err)
+
+	var chunks [][]byte
+	err = tts.Stream(context.Background(), "你好", func(chunk []byte) error {
+		chunks = append(chunks, chunk)
+		close(firstAudio)
+		return nil
+	})
+
+	require.Error(t, err)
+	require.Equal(t, [][]byte{{0x01, 0x02}}, chunks)
 	require.NoError(t, <-handlerDone)
 }

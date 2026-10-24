@@ -48,8 +48,11 @@ func (p *Pipeline) Turn(ctx context.Context, pcm []byte, surface, answer string)
 	if verdict == VerdictCorrect {
 		speech = "猜对了。汤底是：" + answer
 	}
-	audio, err := p.tts.Synthesize(ctx, speech)
-	if err != nil {
+	audio := make([]byte, 0)
+	if err := p.tts.Stream(ctx, speech, func(chunk []byte) error {
+		audio = append(audio, chunk...)
+		return nil
+	}); err != nil {
 		return TurnResult{Transcript: transcript, Verdict: verdict, Player: judged.Player, Speech: speech}, err
 	}
 	return TurnResult{Transcript: transcript, Verdict: verdict, Player: judged.Player, Speech: speech, PCM: audio}, nil

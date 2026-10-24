@@ -42,7 +42,7 @@ go run ./cmd/server
 - AI 播报题面后，玩家之间可以直接讨论；只有需要向 AI 提问、猜测汤底或发出继续/退出指令时，BOOT 第一次按发送 `listen state=start mode=manual`，第二次按发送 `listen state=stop`。
 - `listen start` 前和 `listen stop` 后的音频丢弃；普通现场讨论不上传，只有 `stop` 才提交本次 manual 收音给 ASR。
 - 服务端用 Qwen ASR final 文本交给 DeepSeek 判定：`yes/no/close/irrelevant/correct`。
-- 判定和固定汤底都由 MiniMax 合成，编码成 Opus 下发给设备；固定汤底文本来自题库，不由 LLM 改写。
+- 判定和固定汤底都由 MiniMax 流式合成；PCM 分片边到边编码成 Opus，前 5 帧预缓冲后按 60 ms/帧下发，尾帧全部发完才发送 `tts stop`。固定汤底文本来自题库，不由 LLM 改写。
 - AI 播报时设备处于 `speaking`，忽略 BOOT；`tts stop` 后保持 `idle`。
 - 猜中或超时后朗读汤底并进入讨论态，不自动开下一局；按 BOOT 说“游戏继续”才开新题，也可以说“开始游戏”。
 - 讨论态语音不做判题；说“退出游戏”关闭连接并释放房间。
@@ -113,7 +113,7 @@ go test -race ./...
 staticcheck ./...
 ```
 
-测试覆盖入房欢迎、“开始游戏”、manual start/stop、start 前音频丢弃、第二设备拒绝、猜中后朗读固定汤底、讨论态不判题、“游戏继续”、“退出游戏”、60 秒收音超时、10 分钟局时超时，以及配置题库的更新与停用。
+测试覆盖入房欢迎、“开始游戏”、manual start/stop、start 前音频丢弃、第二设备拒绝、猜中后朗读固定汤底、讨论态不判题、“游戏继续”、“退出游戏”、60 秒收音超时、10 分钟局时超时、配置题库更新与停用，以及 TTS 流式首片下发、非整帧分片重组、尾帧完整下发和异常中断。
 
 ## 验证边界
 
