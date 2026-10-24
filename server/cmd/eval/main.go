@@ -12,9 +12,10 @@ import (
 )
 
 type evalCase struct {
-	name      string
-	utterance string
-	want      game.Verdict
+	name       string
+	utterance  string
+	want       game.Verdict
+	wantPlayer string
 }
 
 var cases = []evalCase{
@@ -23,6 +24,9 @@ var cases = []evalCase{
 	{name: "close", utterance: "火柴落到了某种能托住它的东西上，对吗？", want: game.VerdictClose},
 	{name: "irrelevant", utterance: "这家餐厅今天几点关门？", want: game.VerdictIrrelevant},
 	{name: "correct", utterance: "杯子里的水冻成冰了，火柴掉在冰面上，所以没有熄灭。", want: game.VerdictCorrect},
+	{name: "named yes", utterance: "我是小明，杯子里的水是冰吗？", want: game.VerdictYes, wantPlayer: "小明"},
+	{name: "named no", utterance: "我是王小红，火柴是被风吹灭的吗？", want: game.VerdictNo, wantPlayer: "王小红"},
+	{name: "named correct", utterance: "我叫阿杰，杯子里的水冻成冰了，火柴掉在冰面上，所以没有熄灭。", want: game.VerdictCorrect, wantPlayer: "阿杰"},
 }
 
 func main() {
@@ -61,8 +65,11 @@ func main() {
 		caseStarted := time.Now()
 		transcript := test.utterance
 		var got game.Verdict
+		var gotPlayer string
 		if pipeline == nil {
-			got, err = judge.Judge(ctx, game.TurtleSoupDemo.Surface, game.TurtleSoupDemo.Answer, transcript)
+			var judged game.JudgeResult
+			judged, err = judge.Judge(ctx, game.TurtleSoupDemo.Surface, game.TurtleSoupDemo.Answer, transcript)
+			got, gotPlayer = judged.Verdict, judged.Player
 		} else {
 			audio := make([]byte, 0)
 			err = tts.Stream(ctx, test.utterance, func(chunk []byte) error {
@@ -72,18 +79,18 @@ func main() {
 			if err == nil {
 				var result game.TurnResult
 				result, err = pipeline.Turn(ctx, audio, game.TurtleSoupDemo.Surface, game.TurtleSoupDemo.Answer)
-				got, transcript = result.Verdict, result.Transcript
+				got, gotPlayer, transcript = result.Verdict, result.Player, result.Transcript
 			}
 		}
 		cancel()
-		ok := err == nil && got == test.want
+		ok := err == nil && got == test.want && gotPlayer == test.wantPlayer
 		status := "PASS"
 		if !ok {
 			status = "FAIL"
 		} else {
 			passed++
 		}
-		fmt.Printf("%s\t%s\twant=%s got=%s latency=%s transcript=%q", status, test.name, test.want, got, time.Since(caseStarted).Round(100*time.Millisecond), transcript)
+		fmt.Printf("%s\t%s\twant=%s/%q got=%s/%q latency=%s transcript=%q", status, test.name, test.want, test.wantPlayer, got, gotPlayer, time.Since(caseStarted).Round(100*time.Millisecond), transcript)
 		if err != nil {
 			fmt.Printf(" error=%q", err)
 		}

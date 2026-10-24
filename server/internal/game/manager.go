@@ -32,8 +32,9 @@ var (
 )
 
 const (
-	lobbyPrompt    = "欢迎来到海龟汤。请说“开始游戏”开始新一局；一局结束后说“游戏继续”；随时说“退出游戏”离开。"
-	finishedPrompt = "大家可以讨论，想开新一局请说“游戏继续”。"
+	lobbyPrompt      = "欢迎来到海龟汤。请说“开始游戏”开始新一局；一局结束后说“游戏继续”；随时说“退出游戏”离开。"
+	finishedPrompt   = "本轮游戏结束。想开新一局请说“游戏继续”。"
+	playerNamePrompt = "提问时请先报名字，比如：我是小明，他认识厨师吗？"
 )
 
 type Deps struct {
@@ -69,6 +70,19 @@ func NewManager(deps Deps) (*Manager, error) {
 		manager.rooms[roomID] = newRoom(roomID, deps)
 	}
 	return manager, nil
+}
+
+// Scoreboard 返回房间当前局的实时成绩；没有进行中的局时返回上一局结果。
+func (m *Manager) Scoreboard(roomID int) (Scoreboard, error) {
+	room, ok := m.rooms[roomID]
+	if !ok {
+		return Scoreboard{}, fmt.Errorf("invalid room %d", roomID)
+	}
+	reply := make(chan Scoreboard, 1)
+	if !room.submit(roomCommand{kind: commandScoreboard, scoreboard: reply}) {
+		return Scoreboard{}, errors.New("room is closed")
+	}
+	return <-reply, nil
 }
 
 func (m *Manager) Close() {
@@ -330,6 +344,7 @@ const (
 	commandJudgeDone
 	commandTurnTimeout
 	commandGameTimeout
+	commandScoreboard
 )
 
 type roomCommand struct {
@@ -341,13 +356,17 @@ type roomCommand struct {
 	text     string
 	deviceID string
 	verdict  Verdict
+	player   string
 	err      error
 	ack      chan error
+
+	scoreboard chan Scoreboard
 }
 
 type activeGame struct {
 	recordID uint
 	question Question
+	sheet    scoreSheet
 }
 
 type room struct {
@@ -375,6 +394,7 @@ type room struct {
 	capturing    bool
 	gameTimer    *time.Timer
 	turnTimer    *time.Timer
+	lastResult   Scoreboard
 }
 
 func newRoom(id int, deps Deps) *room {
@@ -385,6 +405,7 @@ func newRoom(id int, deps Deps) *room {
 		done:     make(chan struct{}),
 		stopped:  make(chan struct{}),
 	}
+	r.lastResult = Scoreboard{RoomID: id, Status: ScoreboardIdle, Players: []PlayerScore{}}
 	go r.run()
 	return r
 }
@@ -435,6 +456,8 @@ func (r *room) run() {
 				r.handleTurnTimeout(command.seq)
 			case commandGameTimeout:
 				r.handleGameTimeout(command.seq)
+			case commandScoreboard:
+				command.scoreboard <- r.scoreboard()
 			}
 		}
 	}
@@ -589,13 +612,14 @@ func (r *room) finishTurn(client *client, text string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), externalTimeout)
 		defer cancel()
-		verdict, err := r.deps.Judge.Judge(ctx, question.Surface, question.Answer, text)
+		judged, err := r.deps.Judge.Judge(ctx, question.Surface, question.Answer, text)
 		r.submit(roomCommand{
 			kind:     commandJudgeDone,
 			seq:      gameSeq,
 			text:     text,
 			deviceID: client.deviceID,
-			verdict:  verdict,
+			verdict:  judged.Verdict,
+			player:   judged.Player,
 			err:      err,
 		})
 	}()
@@ -614,12 +638,14 @@ func (r *room) handleJudgeDone(command roomCommand) {
 		r.beginSpeech(VerdictSpeech(VerdictIrrelevant), actionOpenQuestions, "")
 		return
 	}
+	r.deps.Logger.Info("judge turn", "room_id", r.id, "player", command.player, "text", command.text, "verdict", command.verdict)
+	r.current.sheet.record(command.player, command.verdict)
 	if r.timeExpired {
 		r.speakTimeoutAnswer()
 		return
 	}
 	if command.verdict == VerdictCorrect {
-		r.beginSpeech("猜对了。汤底是："+formatSpokenAnswer(r.current.question.Answer)+finishedPrompt, actionFinishGame, command.deviceID)
+		r.beginSpeech("猜对了。"+r.championSpeech()+"汤底是："+formatSpokenAnswer(r.current.question.Answer)+finishedPrompt, actionFinishGame, command.deviceID)
 		return
 	}
 	r.beginSpeech(VerdictSpeech(command.verdict), actionOpenQuestions, "")
@@ -671,7 +697,7 @@ func (r *room) startGame() error {
 	r.gameTimer = time.AfterFunc(r.deps.GameDuration, func() {
 		r.submit(roomCommand{kind: commandGameTimeout, seq: gameSeq})
 	})
-	r.beginSpeech(question.Surface, actionOpenQuestions, "")
+	r.beginSpeech(question.Surface+playerNamePrompt, actionOpenQuestions, "")
 	return nil
 }
 
@@ -786,7 +812,28 @@ func (r *room) speakTimeoutAnswer() {
 	if r.current == nil {
 		return
 	}
-	r.beginSpeech("时间到。本局汤底是："+formatSpokenAnswer(r.current.question.Answer)+finishedPrompt, actionFinishGame, "")
+	r.beginSpeech("时间到。"+r.championSpeech()+"本局汤底是："+formatSpokenAnswer(r.current.question.Answer)+finishedPrompt, actionFinishGame, "")
+}
+
+// championSpeech 设备只播报冠军，完整排名在结算页展示。
+func (r *room) championSpeech() string {
+	champion, ok := r.current.sheet.champion()
+	if !ok {
+		return ""
+	}
+	return championSpeech(champion)
+}
+
+func (r *room) scoreboard() Scoreboard {
+	if r.current == nil {
+		return r.lastResult
+	}
+	return Scoreboard{
+		RoomID:  r.id,
+		Status:  ScoreboardPlaying,
+		Surface: r.current.question.Surface,
+		Players: r.current.sheet.ranking(),
+	}
 }
 
 func (r *room) finishGame() {
@@ -795,6 +842,12 @@ func (r *room) finishGame() {
 	if r.current != nil {
 		if err := r.deps.Store.EndGame(context.Background(), r.current.recordID, winner); err != nil {
 			r.deps.Logger.Error("end game record", "room_id", r.id, "error", err)
+		}
+		r.lastResult = r.scoreboard()
+		r.lastResult.Status = ScoreboardFinished
+		r.lastResult.Answer = r.current.question.Answer
+		if champion, ok := r.current.sheet.champion(); ok {
+			r.lastResult.Champion = champion.Name
 		}
 	}
 	r.current = nil

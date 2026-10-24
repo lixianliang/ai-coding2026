@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>海龟汤结算</title>
+<style>
+  :root { color-scheme: light; --ink:#17202a; --muted:#64748b; --line:#dbe3ec; --accent:#0f766e; --gold:#b7791f; --gold-bg:#fdf6e3; --bg:#f4f7f9; --card:#fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { color-scheme: dark; --ink:#e6edf3; --muted:#94a3b8; --line:#2b3642; --accent:#2dd4bf; --gold:#f6c453; --gold-bg:#2a2414; --bg:#0f141a; --card:#161d25; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.6 system-ui,-apple-system,"PingFang SC",sans-serif; color:var(--ink); background:var(--bg); }
+  main { width:min(960px,calc(100% - 32px)); margin:32px auto; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  h1 { margin:0; font-size:28px; }
+  .rooms { display:flex; gap:8px; }
+  .rooms a { padding:6px 14px; border:1px solid var(--line); border-radius:999px; color:var(--ink); text-decoration:none; }
+  .rooms a.active { background:var(--accent); border-color:var(--accent); color:var(--bg); font-weight:650; }
+  .card { margin-top:20px; padding:24px; border:1px solid var(--line); border-radius:14px; background:var(--card); }
+  .label { color:var(--muted); font-size:14px; }
+  .status { display:inline-block; padding:2px 10px; border-radius:999px; font-size:14px; background:var(--line); }
+  .status.playing { background:var(--accent); color:var(--bg); }
+  .surface { margin-top:6px; font-size:20px; font-weight:650; }
+  .answer { margin-top:12px; }
+  .champion { display:none; margin-top:20px; padding:20px 24px; border-radius:14px; background:var(--gold-bg); border:1px solid var(--gold); }
+  .champion .name { font-size:36px; font-weight:750; color:var(--gold); }
+  table { width:100%; border-collapse:collapse; margin-top:8px; font-variant-numeric:tabular-nums; }
+  th, td { padding:12px 8px; text-align:right; border-bottom:1px solid var(--line); }
+  th:nth-child(2), td:nth-child(2) { text-align:left; }
+  th { color:var(--muted); font-weight:500; font-size:14px; }
+  td.score { font-size:22px; font-weight:700; }
+  tr.first td { color:var(--gold); }
+  .empty { padding:24px 0; color:var(--muted); text-align:center; }
+  .rule { margin-top:12px; color:var(--muted); font-size:14px; }
+  @media (max-width:560px) { th:nth-child(4), td:nth-child(4), th:nth-child(5), td:nth-child(5) { display:none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>海龟汤结算</h1>
+    <nav class="rooms" id="rooms"></nav>
+  </header>
+
+  <section class="card">
+    <div><span class="status" id="status">加载中</span></div>
+    <div class="label" style="margin-top:12px">汤面</div>
+    <div class="surface" id="surface">—</div>
+    <div class="answer" id="answer-box" hidden>
+      <div class="label">汤底</div>
+      <div id="answer"></div>
+    </div>
+  </section>
+
+  <section class="champion" id="champion">
+    <div class="label">本局冠军</div>
+    <div class="name" id="champion-name"></div>
+  </section>
+
+  <section class="card">
+    <div class="label">玩家表现</div>
+    <table>
+      <thead><tr><th>名次</th><th>玩家</th><th>积分</th><th>提问</th><th>问出“是”</th><th>接近</th><th>猜中</th></tr></thead>
+      <tbody id="players"></tbody>
+    </table>
+    <div class="empty" id="empty">还没有玩家得分。提问时先报名字，例如“我是小明，……”。</div>
+    <div class="rule">积分：问出“是” +1，接近 +2，猜中汤底 +5。没报名字的提问不计分。</div>
+  </section>
+</main>
+<script>
+const ROOM_IDS = [1, 2, 3];
+const POLL_MS = 2000;
+const STATUS_TEXT = { idle: '等待开局', playing: '进行中', finished: '本局结束' };
+const roomId = Number(new URLSearchParams(location.search).get('room_id')) || 1;
+
+const rooms = document.querySelector('#rooms');
+for (const id of ROOM_IDS) {
+  const link = document.createElement('a');
+  link.href = `?room_id=${id}`;
+  link.textContent = `${id} 号房`;
+  if (id === roomId) link.className = 'active';
+  rooms.append(link);
+}
+
+function cell(text, className) {
+  const td = document.createElement('td');
+  td.textContent = text;
+  if (className) td.className = className;
+  return td;
+}
+
+function render(board) {
+  const status = document.querySelector('#status');
+  status.textContent = STATUS_TEXT[board.status] || board.status;
+  status.className = `status ${board.status}`;
+  document.querySelector('#surface').textContent = board.surface || '—';
+  document.querySelector('#answer-box').hidden = !board.answer;
+  document.querySelector('#answer').textContent = board.answer;
+  document.querySelector('#champion').style.display = board.champion ? 'block' : 'none';
+  document.querySelector('#champion-name').textContent = board.champion;
+
+  const tbody = document.querySelector('#players');
+  tbody.replaceChildren(...board.players.map((p, i) => {
+    const tr = document.createElement('tr');
+    if (i === 0 && p.name === board.champion) tr.className = 'first';
+    tr.append(cell(i + 1), cell(p.name), cell(p.score, 'score'), cell(p.questions), cell(p.yes), cell(p.close), cell(p.correct ? '✓' : ''));
+    return tr;
+  }));
+  document.querySelector('#empty').style.display = board.players.length ? 'none' : 'block';
+}
+
+async function poll() {
+  try {
+    const res = await fetch(`/v1/rooms/${roomId}/scoreboard`, { cache: 'no-store' });
+    const body = await res.json();
+    if (body.code === 0) render(body.data);
+  } catch (err) {
+    document.querySelector('#status').textContent = '连接服务失败，正在重试';
+  }
+  setTimeout(poll, POLL_MS);
+}
+poll();
+</script>
+</body>
+</html>
