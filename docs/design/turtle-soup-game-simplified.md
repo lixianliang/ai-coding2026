@@ -1,6 +1,6 @@
 # 海龟汤：Linx + Go 精简方案
 
-> 一台 `yunliao-s3` 放在桌上，多人围坐共玩；玩家现场直接交流，按 BOOT 向 AI 主持人提问。固定房间 1/2/3，每局 10 分钟。当前只做线下共设备模式，不做多设备、声纹、AI 玩家、真人主持和掉线恢复。
+> 一台 `yunliao-s3` 放在桌上，多人围坐共玩；玩家现场直接交流，按 BOOT 向 AI 主持人提问。固定房间 1/2/3，每局 10 分钟。当前只做线下共设备模式，不做多设备、独立声纹注册、AI 玩家、真人主持和掉线恢复。
 
 ## 1. 方案结论
 
@@ -21,7 +21,7 @@ ESP32-S3（yunliao-s3）
        Go 单服务
        ├─ 固定房间 1/2/3
        ├─ 题库、局时、讨论态、固定汤底
-       ├─ Qwen Realtime ASR（manual commit + 中间结果）
+       ├─ 豆包 ASR 2.0（中间结果 + 说话人编号）
        ├─ DeepSeek 判题
        └─ MiniMax TTS + Opus/PCM 编解码
 ```
@@ -51,7 +51,7 @@ AI 播报题面后，玩家现场讨论；需要向 AI 提问或猜测汤底时�
 ## 2. 房间与规则
 
 - 固定房间 1、2、3；房间号由 Linx 入口对话选择，并注入智能体提示词。
-- 每房一台共享设备，玩家数量按现场空间决定；玩家提问时先口头报名字（“我是小明，……”），用于个人积分，不做声纹。
+- 每房一台共享设备，玩家数量按现场空间决定；玩家直接提问，豆包 ASR 区分说话人，服务端自动分配“玩家 1、2、3”用于本局积分。
 - 房间状态只在 Go 内存中保存；设备断开即离房，不做断线快照恢复。
 - 每局 10 分钟；每次提问最长 60 秒，到时由服务端收麦。
 - Game WSS 入房后先播放欢迎提示，不自动开局；玩家说“开始游戏”后才选题并朗读汤面。
@@ -72,7 +72,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 
 - 连接后设备发 `hello`，服务端返回 `hello`。
 - 设备发 `listen state=start mode=manual`，随后上传 Opus 二进制帧。
-- 设备发 `listen state=stop` 后，服务端提交 Qwen ASR。
+- 设备发 `listen state=stop` 后，服务端补静音等待豆包 ASR 确定分句。
 - 服务端发 `tts state=start`，TTS 分片边到边编码为 Opus 二进制帧，全部尾帧发完后才发 `tts state=stop`。
 - `stt`、`tts sentence_start` 只用于显示，不参与控制。
 
@@ -102,19 +102,19 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 
 1. 设备连接 Game WSS 后，Go 先播放欢迎提示并停在等待开局状态，不自动选题。
 2. 玩家按 BOOT 说“开始游戏”，Go 从可配置题库选一题，锁住汤面和汤底。
-3. 服务端发 `tts start`，用 AI 音色朗读汤面并提示“提问时请先报名字”；MiniMax PCM 分片一到就编码为 Opus 匀速下发，尾帧发完再发 `tts stop`。
+3. 服务端发 `tts start`，用 AI 音色朗读汤面并提示按键提问、每次一人说话；MiniMax PCM 分片一到就编码为 Opus 匀速下发，尾帧发完再发 `tts stop`。
 4. 设备播完后回到 idle；玩家可以现场讨论，只有需要向 AI 提问或猜测汤底时才按 BOOT 开始一次 manual 收音。
 
 ### 4.2 玩家提问
 
 1. 玩家需要向 AI 提问或猜测汤底时按 BOOT，设备发 `listen start` 并上传 Opus。
-2. Go 将 manual 收音的 Opus 解码为 PCM，持续送入 Qwen Realtime ASR。
-3. Qwen 的 partial 结果只用于日志或显示，不推进游戏状态。
+2. Go 将 manual 收音的 Opus 解码为 PCM，持续送入豆包 ASR 2.0。
+3. ASR 的 partial 结果只用于日志或显示，不推进游戏状态。
 4. 玩家说完后再按 BOOT，设备发 `listen stop`；Go 提交当前 ASR 音频并等待 final。
-5. final 文本交给 DeepSeek，判定为 `yes / no / close / irrelevant / correct`，同时提取玩家开头自报的名字并累计积分（见 4.5）。
+5. final 文本交给 DeepSeek，判定为 `yes / no / close / irrelevant / correct`，使用 ASR 的说话人编号归属积分（见 4.5）。
 6. Go 将判定结果交给 TTS，边收 PCM 分片边编码为 Opus 下发；最后音频完整发出后才进入播放结束，设备回 idle，玩家可以继续现场讨论。
 
-不自己实现 VAD。当前按键 manual 模式由玩家显式按键结束收音；只有按键确认的语音才提交给 Go，ASR 中间结果由 Qwen 提供。
+不自己实现 VAD。当前按键 manual 模式由玩家显式按键结束收音；只有按键确认的语音才提交给 Go，ASR 中间结果由厂商提供。
 
 ### 4.3 结束与讨论
 
@@ -132,7 +132,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 
 ### 4.5 积分与结算页
 
-**玩家身份：** 不做声纹。玩家每次提问先报名字，判题模型在同一次调用里输出 `{"verdict":..., "player":"小明"}`；没报名字的提问照常判题，但不计分。
+**玩家身份：** 豆包 ASR 2.0 返回 `utterances[].additions.speaker_id`，服务端按本局首次提问顺序映射“玩家 1、2、3”，不要求报名字。判题模型只输出 `{"verdict":...}`。多说话人或无编号时照常判题，不计个人分。
 
 **积分规则：**
 
@@ -169,7 +169,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 AI 只做主持，不拥有答案：
 
 - 朗读汤面。
-- 判断玩家问题与固定答案的关系：`yes / no / close / irrelevant / correct`，并提取玩家自报的名字。
+- 判断玩家问题与固定答案的关系：`yes / no / close / irrelevant / correct`，不承担身份识别。
 - 识别玩家是否猜中，组织简短播报。
 - 结束时由服务端取固定汤底，交给 TTS 逐字朗读。
 
@@ -182,7 +182,7 @@ AI 只做主持，不拥有答案：
 - Gin：`/healthz`、Game WSS 升级、`/playground` 联调页。
 - GORM + SQLite：题库、汤底、局记录；`config.local.json` 的 `questions` 定义完整启用题库，运行中的房间状态放内存。
 - 每房一个 actor：当前设备、局状态、截止时间、讨论态。
-- Qwen Realtime ASR：每台在线设备一个会话，manual commit。
+- 豆包 ASR 2.0：每台在线设备一个持续会话，manual stop 后补静音获取确定结果。
 - 主持智能体：汤面、判题、结束播报。
 - TTS + Opus：生成 AI 音频并下发给当前设备。
 
@@ -210,7 +210,7 @@ AI 只做主持，不拥有答案：
 
 不做：
 
-- 多设备房间、玩家语音转发、声纹、说话人分离。
+- 多设备房间、玩家语音转发、独立声纹注册。
 - AI 玩家、真人主持。
 - 匹配/排队大厅、跨局长期排行榜、多人混音。
 - 掉线快照恢复、断线续局。
@@ -241,7 +241,7 @@ AI 只做主持，不拥有答案：
 | 层次 | 验证内容 | 证据入口 |
 | --- | --- | --- |
 | 业务正确性 | 自然语言判题、玩家提取、固定汤底不被改写 | `go run ./cmd/eval` |
-| 云端语音链 | Qwen ASR → DeepSeek 判题 → MiniMax TTS | `go run ./cmd/eval -e2e` |
+| 云端语音链 | 配置的 ASR → DeepSeek 判题 → MiniMax TTS | `go run ./cmd/eval -e2e` |
 | 游戏回归 | 显式开始、manual start/stop、未开始收音忽略、猜中、讨论态、继续、退出、回合/整局超时、第二台设备拒绝 | `server/internal/api/router_test.go` |
 | 音频完整性 | provider 完成前流式返回、任意 PCM 边界、尾部 Flush、尾帧发完才 `tts stop`、中途失败不伪成功 | `server/internal/game/manager_test.go`、`tts_minimax_test.go` |
 | 工程质量 | 格式、静态分析、竞态与全部单测 | `gofmt`、`go vet`、`go test -race`、`staticcheck` |
@@ -263,9 +263,9 @@ AI 只做主持，不拥有答案：
 ## 12. 主要风险
 
 - 共享一台设备意味着同一时间只有一名玩家向 AI 提问；现场讨论不受影响。
-- 玩家身份只靠口头报名字：忘记报名不计分，冒用他人名字无法识别；不做声纹是首版范围控制。
+- 玩家编号依赖 ASR 会话内聚类；短句、噪声、多人抢话可能误分。编号不跨重连保证，仍需真人实测。
 - 门店网络和 4G 稳定性决定 ASR/TTS 是否可用，必须现场实测。
-- Qwen 的中间结果可能因噪声或口音波动；manual stop 只提交一次最终结果，仍需评测集回归。
+- ASR 的中间结果可能因噪声或口音波动；manual stop 只提交一次最终结果，仍需评测集回归。
 - 设备断线直接离房，当前局不恢复；这是首版明确接受的限制。
 - 单局云成本、设备维护成本和门店付费意愿必须用真实数据验证。
 
@@ -275,3 +275,12 @@ AI 只做主持，不拥有答案：
 - [Linx WebSocket 协议](https://linx.qiniu.com/docs/xrobot/platform/websocket)
 - [Linx 设备端 MCP](https://linx.qiniu.com/docs/xrobot/mcp/hardware-mcp)
 - [Qwen Realtime ASR API](https://help.aliyun.com/zh/model-studio/qwen-asr-realtime-api/?spm=a2c4g.11186623.help-menu-2400256.d_2_6_3_0_3.620e3274Dn7gft)
+
+## ASR 说话人识别验证（2026-10-24）
+
+- [Qwen 实时 ASR 文档](https://help.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide)未提供会话内说话人身份字段，不能让 LLM 从文本猜身份。
+- [豆包流式 ASR 官方文档](https://www.volcengine.com/docs/6561/1354869)支持 `enable_speaker_info`；优化接口须同时开启 `enable_nonstream`，`ssd_version=200`。现有灵矽豆包配置的应用凭据实测可调用 ASR 2.0。
+- 真实云端、三种合成声音 A→B→C→A（最后 A 换一句内容），间隔 5 秒，实际返回 `0→1→2→0`；停止输入到最终结果约 0.83–1.16 秒。属于合成音频服务验证，不是三名真人/设备噪声验收。
+- 保持一条 ASR 连接，用静音保活保留聚类上下文；不在每次 BOOT stop 后发送关闭整条流的负包。无独立声纹服务，无跨项目代码依赖，无固件协议变更。
+- 首次有效提问建立本局编号，显示为玩家 1、2、3。编号来自音频，不受文本中自报姓名影响。混合说话人、缺失编号不计个人分；游戏照常继续。下一局清空编号映射。
+- 静音保活也占流式 ASR 时长，商业成本按设备连接时长核算。当前没有保存玩家录音或回放页面，不能将回放作为已实现能力。

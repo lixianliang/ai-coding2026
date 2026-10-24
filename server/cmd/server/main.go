@@ -67,7 +67,7 @@ func run(logger *slog.Logger) error {
 			logger.Error("close audio codec", "error", err)
 		}
 	}()
-	asr, err := game.NewQwenASR(cfg.ASR.APIKey, cfg.ASR.URL, cfg.ASR.Model, cfg.ASR.Language)
+	asr, err := game.NewASR(cfg.ASR)
 	if err != nil {
 		return err
 	}

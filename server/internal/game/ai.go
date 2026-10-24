@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"unicode"
@@ -20,8 +21,9 @@ const (
 )
 
 type ASREvent struct {
-	Kind ASREventKind
-	Text string
+	Kind      ASREventKind
+	Text      string
+	SpeakerID string
 }
 
 type ASRSession interface {
@@ -53,7 +55,9 @@ func (s *debugASRSession) Push(_ context.Context, pcm []byte) error {
 	if !utf8.Valid(pcm) || !strings.HasPrefix(string(pcm), debugTranscriptPrefix) {
 		return nil
 	}
-	_, _ = s.audio.Write(pcm)
+	if _, err := s.audio.Write(pcm); err != nil {
+		return fmt.Errorf("buffer debug audio: %w", err)
+	}
 	return nil
 }
 
@@ -89,10 +93,9 @@ const (
 	VerdictCorrect    Verdict = "correct"
 )
 
-// JudgeResult 中 Player 是玩家发言开头自报的名字，未自报时为空。
+// JudgeResult contains only the verdict; identity comes from ASR.
 type JudgeResult struct {
 	Verdict Verdict
-	Player  string
 }
 
 type Judge interface {

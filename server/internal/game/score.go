@@ -39,7 +39,7 @@ type Scoreboard struct {
 	Players  []PlayerScore    `json:"players"`
 }
 
-// scoreSheet 按玩家首次发言顺序累计一局的成绩，未自报名字的发言不计入。
+// scoreSheet 按玩家首次发言顺序累计一局的成绩，未识别出唯一说话人的发言不计入。
 type scoreSheet struct {
 	players []PlayerScore
 }

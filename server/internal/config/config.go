@@ -9,6 +9,10 @@ import (
 )
 
 const (
+	ASRProviderQwen            = "qwen"
+	ASRProviderDoubao          = "doubao"
+	defaultDoubaoURL           = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+	defaultDoubaoResource      = "volc.seedasr.sauc.duration"
 	defaultAddress             = ":8080"
 	defaultDatabase            = "data/game.db"
 	defaultTurnDurationSeconds = 60
@@ -45,10 +49,13 @@ type QuestionConfig struct {
 }
 
 type ASRConfig struct {
-	APIKey   string `json:"api_key"`
-	URL      string `json:"url"`
-	Model    string `json:"model"`
-	Language string `json:"language"`
+	Provider   string `json:"provider"`
+	AppID      string `json:"app_id"`
+	ResourceID string `json:"resource_id"`
+	APIKey     string `json:"api_key"`
+	URL        string `json:"url"`
+	Model      string `json:"model"`
+	Language   string `json:"language"`
 }
 
 type LLMConfig struct {
@@ -101,6 +108,17 @@ func (c *Config) applyDefaults() {
 	if c.GameDurationSeconds <= 0 {
 		c.GameDurationSeconds = defaultGameDurationSeconds
 	}
+	if c.ASR.Provider == "" {
+		c.ASR.Provider = ASRProviderQwen
+	}
+	if c.ASR.Provider == ASRProviderDoubao {
+		if c.ASR.URL == "" {
+			c.ASR.URL = defaultDoubaoURL
+		}
+		if c.ASR.ResourceID == "" {
+			c.ASR.ResourceID = defaultDoubaoResource
+		}
+	}
 	if c.ASR.URL == "" {
 		c.ASR.URL = defaultASRURL
 	}
@@ -146,6 +164,12 @@ func (c Config) validate() error {
 			return fmt.Errorf("duplicate question id %d", question.ID)
 		}
 		seenQuestions[question.ID] = struct{}{}
+	}
+	if c.ASR.Provider != ASRProviderQwen && c.ASR.Provider != ASRProviderDoubao {
+		return fmt.Errorf("unsupported asr.provider %q", c.ASR.Provider)
+	}
+	if c.ASR.Provider == ASRProviderDoubao && c.ASR.AppID == "" {
+		return errors.New("asr.app_id is required for doubao")
 	}
 	if c.ASR.APIKey == "" {
 		return errors.New("asr.api_key is required")
