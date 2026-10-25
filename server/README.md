@@ -14,13 +14,29 @@
 
 ## 启动
 
+需要 Go 1.27.0 或更高兼容版本（以 `go.mod` 为准）、C 编译器、`pkg-config`、Opus 和 opusfile 开发库；SQLite 驱动和 Opus 绑定使用 CGO，不能设置 `CGO_ENABLED=0`。
+
+```bash
+# macOS：先安装 Xcode Command Line Tools，再安装原生库
+xcode-select --install
+brew install pkg-config opus opusfile
+
+# Ubuntu / Debian（二选一，不要在 macOS 执行）
+sudo apt-get install build-essential pkg-config libopus-dev libopusfile-dev
+```
+
+安装 Go 后，从仓库根目录执行：
+
 ```bash
 cd server
 cp config.example.json config.local.json
 chmod 600 config.local.json
 # 填写 asr/llm/tts 的 api_key 后启动
+go mod download
 go run ./cmd/server
 ```
+
+另开终端执行 `curl http://127.0.0.1:8080/healthz`，应返回 `code: 0` 和 `data.status: "ok"`。这只证明 HTTP 服务可用；真实模型是否可调用，需继续跑下方云端评测。浏览器页面内嵌在 Go 程序中，无需安装 Node.js 或单独启动前端。
 
 所有运行配置都放在一个 JSON 中；`GAME_CONFIG` 只负责指定文件，默认 `config.local.json`。`config.local.json` 已被 `.gitignore` 排除，不要提交真实密钥。配置了 `questions` 后，它表示完整启用题库：同 `id` 覆盖汤面和汤底，未出现的旧题会在下次启动时停用。
 
@@ -121,7 +137,7 @@ GOCACHE=/tmp/codex-staticcheck-cache GOMODCACHE=/tmp/codex-staticcheck-mod \
 
 ## 验证边界
 
-- 已验证云端 Qwen ASR、DeepSeek 判题、MiniMax TTS 和 `/playground` HTTP 链路。
+- 历史验证包含 Qwen/DeepSeek/MiniMax 与 `/playground` 链路；当前示例使用豆包 ASR，说话人和 WebSocket 专项记录见技术方案第 10 节。历史结果不代表当前环境已复验。
 - 自动化测试已验证 Game WSS 状态流程：欢迎 → “开始游戏” → 汤面 → 错误回答 → 猜中并朗读汤底 → 讨论态 → “游戏继续” → “退出游戏”。
 - 已通过 Linx 本地 MCP 将真机切到 Game WSS；固件确认 8 MB PSRAM、ES8388、LCD 和 Wi-Fi 正常。
 - 真机 TTS 完整播放与 BOOT 全流程需在音频节奏修复后复验。

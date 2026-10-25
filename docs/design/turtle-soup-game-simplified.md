@@ -145,7 +145,7 @@ Game WSS 不定义第二套状态机，只复用现有小智 WebSocket 格式：
 
 排名按积分降序；同分时猜中者优先，再按首次发言顺序。没有人得分时不产生冠军。积分只在本局有效，新一局重新计算；成绩保存在房间 actor 内存中，不落库。
 
-**设备播报：** 局终播报“猜对了。本局冠军是小明，得6分。汤底是：……。本轮游戏结束。想开新一局请说“游戏继续”。”，不朗读完整排名；超时则以“时间到。”开头。
+**设备播报：** 局终播报“猜对了。本局冠军是玩家1，得6分。汤底是：……。本轮游戏结束。想开新一局请说“游戏继续”。”，不朗读完整排名；超时则以“时间到。”开头。
 
 **结算页：** Go 服务提供网页，门店用电视或平板打开即可，不需要 App：
 
@@ -297,16 +297,7 @@ AI 只做主持，不拥有答案：
 
 ## 11. 3 分钟 Demo
 
-| 时间 | 演示内容 |
-| --- | --- |
-| 0:00–0:20 | 桌游店换场空房；店主想多卖一局，但不想增加主持排班 |
-| 0:20–0:45 | 玩家唤醒设备说“进入 1 号房玩海龟汤”；Linx 触发设备本地 MCP，设备播放欢迎提示，玩家按 BOOT 说“开始游戏”后 AI 朗读汤面 |
-| 0:45–1:35 | 玩家围坐讨论；需要向 AI 提问或猜测汤底时按 BOOT 进行 manual 收音，不同问法得到“是 / 不是 / 接近” |
-| 1:35–2:05 | 一名玩家猜中，AI 朗读固定汤底并提示可以继续讨论 |
-| 2:05–2:30 | 玩家按 BOOT 说“游戏继续”开新一局；再演示“退出游戏” |
-| 2:30–3:00 | 展示单局成本、完整完成率、第二局率和门店回本假设 |
-
-现场要证明：玩家之间直接交流，设备只承担与 AI 主持人的问答；整局没有店员讲题或判题。
+拍摄方法、逐句操作、时间安排和视频上传位置统一见 [Demo 录制说明](../demo/README.md)。完整原片保留游戏关键状态转换，展示版约 3 分钟。
 
 ## 12. 主要风险
 
@@ -316,6 +307,65 @@ AI 只做主持，不拥有答案：
 - ASR 的中间结果可能因噪声或口音波动；manual stop 只提交一次最终结果，仍需评测集回归。
 - 设备断线直接离房，当前局不恢复；这是首版明确接受的限制。
 - 单局云成本、设备维护成本和门店付费意愿必须用真实数据验证。
+
+## 13. 模块规格与团队分工
+
+### 13.1 部署与依赖
+
+```mermaid
+flowchart LR
+    Players[现场玩家] -->|唤醒与入口对话| Device[ESP32-S3 共享设备]
+    Device <-->|普通连接与本地 MCP| Linx[Linx 入口智能体]
+    Device <-->|切流后 hello / listen / tts / Opus| API[Go HTTP / WebSocket]
+    API --> Room[每房一个 actor]
+    Room --> ASR[豆包 ASR：文本与说话人]
+    Room --> Judge[DeepSeek：结构化判题]
+    Room --> TTS[MiniMax：流式 PCM]
+    Room --> Store[(SQLite：题库与局记录)]
+    Browser[结算页] -->|只读查询| API
+```
+
+Go 单进程提供游戏连接和网页。设备在 Linx 与 Game WS 之间切换；房间状态由 Go 决定，模型只返回判定。`cmd/server` 组装配置、数据库、provider 和房间管理器；API 依赖游戏模块，游戏模块通过 ASR/Judge/TTS 接口调用外部服务，不依赖网页。下表是逻辑职责划分，不代表拆成多个微服务。
+
+### 13.2 模块规格
+
+| 模块 / 源码入口 | 输入 → 输出 | 职责与约束 |
+| --- | --- | --- |
+| Linx 入口（外部平台配置） | 选房意图 → `self.game.start(room_id)` | 设备激活、普通入口对话；不维护 Go 游戏状态 |
+| [固件入口](../../xiaozhi-esp32/main/application.cc)、[MCP](../../xiaozhi-esp32/main/mcp_server.cc) | MCP、BOOT、协议消息 → 连接切换、采集、播放、显示 | 房间限定 1/2/3；游戏 URL 为临时覆盖；播放排空后回 idle |
+| [HTTP / WebSocket](../../server/internal/api/router.go)、[协议](../../server/internal/game/protocol.go) | HTTP 请求、握手头、JSON/Opus → 响应或房间事件 | 校验 room/device/protocol/token；JSON API 使用 `{code,message,reqid,data}`；复用既有音频协议 |
+| [房间管理](../../server/internal/game/manager.go) | 入房、按键、ASR、判题、计时、TTS 完成 → 下一状态及播报 | 每房一个设备，actor 串行变更状态；欢迎不自动开局，结束不自动下一局；断开离房 |
+| [ASR](../../server/internal/game/asr_doubao.go) | manual 区间 PCM、stop → 最终文本与 speaker ID | 每设备连接持续会话；stop 收尾，讨论期间仅合成静音保活；无唯一编号时不计个人分 |
+| [判题](../../server/internal/game/judge_deepseek.go) | 汤面、固定汤底、提问 → 五类 verdict | 结构化输出；不改写汤底，不控制设备状态，不从姓名文本猜身份 |
+| [TTS](../../server/internal/game/tts_minimax.go)、[编解码](../../server/internal/game/codec.go) | 固定播报文本 → PCM 分片 → Opus | 房间层管理起播缓冲、60 ms 匀速发送和尾帧；每段播报独立编码状态 |
+| [配置](../../server/internal/config/config.go)、[存储](../../server/internal/game/store.go) | 本地 JSON → provider 参数、启用题库、SQLite 局记录 | 启动时校验并同步题库；数据库不是房间快照，积分不持久化 |
+| [积分](../../server/internal/game/score.go)、[结算页](../../server/internal/api/scoreboard.html) | verdict、说话人、房间查询 → 排名与局终汤底 | 本局匿名编号；结算页只读，每 2 秒刷新；游戏中不向结算页返回汤底 |
+| [联调页](../../server/internal/api/playground.html)、[单轮链路](../../server/internal/game/pipeline.go) | 浏览器 PCM → 转写、判定、回复音频 | 固定示例题单轮联调，HTTP 等完整回复后返回；不能代表设备流式播放或整局验收 |
+| [模型评测](../../server/cmd/eval/)、[说话人评测](../../server/cmd/speaker-eval/)、[skills](../../.agents/skills/) | 固定样例 / 标注音频 / 研发任务 → 断言结果或操作流程 | 云端与确定性测试分层；失败退出非零；skill 本身不等于测试通过 |
+
+### 13.3 分工依据
+
+以下按截至 2026-10-25 的 GitHub Issue/PR 作者与改动范围整理，是可追溯的贡献记录，不据此推算工时或排除共同协作。
+
+| 成员（GitHub） | 记录中的工作 | 依据 |
+| --- | --- | --- |
+| `lixianliang` | 游戏流程与协议设计输入；Linx/XiaoZhi 职责说明；manual 交互文档 | [Issue #2](https://github.com/lixianliang/ai-coding2026/issues/2)、[PR #8](https://github.com/lixianliang/ai-coding2026/pull/8)、[#9](https://github.com/lixianliang/ai-coding2026/pull/9) |
+| `undauanted` | 固件 MCP 与 StartGame 入口；TTS 发送节奏、P4 manual 按键；积分、冠军播报、结算页 | [PR #3](https://github.com/lixianliang/ai-coding2026/pull/3)、[#10](https://github.com/lixianliang/ai-coding2026/pull/10)、[#12](https://github.com/lixianliang/ai-coding2026/pull/12) |
+| `cffa-as` | MVP 设计与 Go 服务；设备游戏链路与验证；产品定位、题库、流式 TTS、屏幕与重播、匿名说话人、音频/ASR 修复、质量评估与 skills | [Issue #1](https://github.com/lixianliang/ai-coding2026/issues/1)、下表所列 PR |
+
+| 交付阶段 | PR 记录（作者均为 `cffa-as`） |
+| --- | --- |
+| Go 服务、协议、测试与提交 skill | [#4](https://github.com/lixianliang/ai-coding2026/pull/4) |
+| 线下共享设备产品定位 | [#5](https://github.com/lixianliang/ai-coding2026/pull/5) |
+| 设备游戏链路与验证补充 | [#6](https://github.com/lixianliang/ai-coding2026/pull/6)、[#7](https://github.com/lixianliang/ai-coding2026/pull/7) |
+| 入房欢迎、显式开始、可配置题库 | [#11](https://github.com/lixianliang/ai-coding2026/pull/11) |
+| 流式 TTS 与完整匀速播放 | [#13](https://github.com/lixianliang/ai-coding2026/pull/13) |
+| 汤面重播与 yunliao-s3 显示 | [#14](https://github.com/lixianliang/ai-coding2026/pull/14) |
+| 豆包说话人识别，取消报名字 | [#15](https://github.com/lixianliang/ai-coding2026/pull/15) |
+| 首段 TTS、manual stop 与重播无响应修复 | [#16](https://github.com/lixianliang/ai-coding2026/pull/16) |
+| 质量评估函数、分层回归与现场证据 | [#17](https://github.com/lixianliang/ai-coding2026/pull/17) |
+
+Issue #1/#2 和[原方案](turtle-soup-game.md)包含早期多设备、自动收音等设计输入，不能视为当前已实现功能；当前范围以本文和实际源码为准。
 
 ## 参考
 
