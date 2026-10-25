@@ -7,22 +7,19 @@
 - Go 服务负责房间 1/2/3、可配置题库、manual 收音、计时、判题和 TTS。
 - 一台设备供多人围坐共玩；进入房间先播放欢迎提示，玩家说“开始游戏”后才出题。
 - AI 播报题面后，玩家之间可以直接讨论，只有需要向 AI 提问、猜测汤底或发出继续/退出指令时才按 BOOT 发起一次 manual 收音。
-- manual 收音期间设备流式上传语音，按键结束后服务端获取 ASR 最终文本并判题；豆包 ASR 将说话人映射为本局“玩家 1、2、3”，无需报名字，不做独立声纹注册或玩家音频转发。
+- manual 收音结束后，设备把完整语音提交给 Go 服务做 ASR 和判题；服务端不转发玩家之间的讨论音频，豆包 ASR 在会话内提供匿名说话人编号用于积分。
 - 设备网络链路使用 Opus，服务端内部统一 PCM 16 kHz、单声道、16-bit。
 - 猜中或超时后朗读固定汤底并进入讨论态；说“游戏继续”才开下一局，说“退出游戏”释放房间。
 - 当前不做 AI 玩家、真人主持和掉线恢复。
 
-## 交付入口
+项目文档按四个主题整理：
 
-- [源码、运行与交付清单](docs/project-delivery.md)
-- Demo 视频：待上传。
-- [服务端启动、配置与验证命令](server/README.md)
+- [商业价值](docs/business-value.md)：客户、价值、成本、定价假设和门店验证。
+- [产品设计](docs/product-design.md)：游戏流程、交互规则、积分、结算和功能边界。
+- [架构设计](docs/architecture.md)：Linx、XiaoZhi 固件、Go 游戏服务、MCP 和 Game WSS。
+- [部署与使用](docs/deployment.md)：配置、启动、设备接入、玩家操作和验证命令。
 
-方案与演示：[docs/design/turtle-soup-game-simplified.md](docs/design/turtle-soup-game-simplified.md)。
-
-产品定位与商业设计：[docs/design/turtle-soup-product-positioning.md](docs/design/turtle-soup-product-positioning.md)。
-
-原方案：[docs/design/turtle-soup-game.md](docs/design/turtle-soup-game.md)。
+完整索引见 [docs/README.md](docs/README.md)。
 
 ## AI 工程效率
 
@@ -41,3 +38,6 @@ go run ./cmd/eval -config config.local.json
 go run ./cmd/eval -config config.local.json -e2e
 go test -race ./...
 ```
+
+- [Demo 视频](docs/demo/turtle-soup-demo.mp4)：实际设备录制。
+- [项目贡献记录](docs/contributions.md)：按 Issue/PR 整理分工。
