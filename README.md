@@ -38,3 +38,5 @@ go run ./cmd/eval -config config.local.json
 go run ./cmd/eval -config config.local.json -e2e
 go test -race ./...
 ```
+
+- [Demo 视频](docs/demo/turtle-soup-demo.mp4)：实际设备录制。
