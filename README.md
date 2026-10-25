@@ -15,7 +15,7 @@
 ## 交付入口
 
 - [源码、运行与交付清单](docs/project-delivery.md)
-- [Demo 录制脚本与视频状态](docs/demo/README.md)（视频待录制）
+- Demo 视频：待上传。
 - [服务端启动、配置与验证命令](server/README.md)
 
 方案与演示：[docs/design/turtle-soup-game-simplified.md](docs/design/turtle-soup-game-simplified.md)。

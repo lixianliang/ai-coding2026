@@ -297,7 +297,7 @@ AI 只做主持，不拥有答案：
 
 ## 11. 3 分钟 Demo
 
-拍摄方法、逐句操作、时间安排和视频上传位置统一见 [Demo 录制说明](../demo/README.md)。完整原片保留游戏关键状态转换，展示版约 3 分钟。
+Demo 视频待上传。
 
 ## 12. 主要风险
 
@@ -351,19 +351,7 @@ Go 单进程提供游戏连接和网页。设备在 Linx 与 Game WS 之间切�
 | --- | --- | --- |
 | `lixianliang` | 游戏流程与协议设计输入；Linx/XiaoZhi 职责说明；manual 交互文档 | [Issue #2](https://github.com/lixianliang/ai-coding2026/issues/2)、[PR #8](https://github.com/lixianliang/ai-coding2026/pull/8)、[#9](https://github.com/lixianliang/ai-coding2026/pull/9) |
 | `undauanted` | 固件 MCP 与 StartGame 入口；TTS 发送节奏、P4 manual 按键；积分、冠军播报、结算页 | [PR #3](https://github.com/lixianliang/ai-coding2026/pull/3)、[#10](https://github.com/lixianliang/ai-coding2026/pull/10)、[#12](https://github.com/lixianliang/ai-coding2026/pull/12) |
-| `cffa-as` | MVP 设计与 Go 服务；设备游戏链路与验证；产品定位、题库、流式 TTS、屏幕与重播、匿名说话人、音频/ASR 修复、质量评估与 skills | [Issue #1](https://github.com/lixianliang/ai-coding2026/issues/1)、下表所列 PR |
-
-| 交付阶段 | PR 记录（作者均为 `cffa-as`） |
-| --- | --- |
-| Go 服务、协议、测试与提交 skill | [#4](https://github.com/lixianliang/ai-coding2026/pull/4) |
-| 线下共享设备产品定位 | [#5](https://github.com/lixianliang/ai-coding2026/pull/5) |
-| 设备游戏链路与验证补充 | [#6](https://github.com/lixianliang/ai-coding2026/pull/6)、[#7](https://github.com/lixianliang/ai-coding2026/pull/7) |
-| 入房欢迎、显式开始、可配置题库 | [#11](https://github.com/lixianliang/ai-coding2026/pull/11) |
-| 流式 TTS 与完整匀速播放 | [#13](https://github.com/lixianliang/ai-coding2026/pull/13) |
-| 汤面重播与 yunliao-s3 显示 | [#14](https://github.com/lixianliang/ai-coding2026/pull/14) |
-| 豆包说话人识别，取消报名字 | [#15](https://github.com/lixianliang/ai-coding2026/pull/15) |
-| 首段 TTS、manual stop 与重播无响应修复 | [#16](https://github.com/lixianliang/ai-coding2026/pull/16) |
-| 质量评估函数、分层回归与现场证据 | [#17](https://github.com/lixianliang/ai-coding2026/pull/17) |
+| `cffa-as` | MVP 设计与 Go 服务；设备游戏链路与验证；产品定位、题库、流式 TTS、屏幕与重播、匿名说话人、音频/ASR 修复、质量评估与 skills | [Issue #1](https://github.com/lixianliang/ai-coding2026/issues/1)、[PR 提交记录](https://github.com/lixianliang/ai-coding2026/pulls?q=is%3Apr+author%3Acffa-as+is%3Amerged) |
 
 Issue #1/#2 和[原方案](turtle-soup-game.md)包含早期多设备、自动收音等设计输入，不能视为当前已实现功能；当前范围以本文和实际源码为准。
 

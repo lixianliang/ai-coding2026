@@ -11,7 +11,7 @@
 | 架构、模块规格、分工 | [技术方案](design/turtle-soup-game-simplified.md)，模块与分工见第 13 节 | 已整理 |
 | 商业价值与产品设计 | [产品方案](design/turtle-soup-product-positioning.md) | 包含定价与门店试点假设 |
 | 质量评估与回归 | [技术方案第 10 节](design/turtle-soup-game-simplified.md#10-评分维度与现场证据) | 区分已有证据和待验收能力 |
-| Demo 视频 | [录制与上传说明](demo/README.md) | **待录制、待上传** |
+| Demo 视频 | 录制完成后补充视频链接 | **待上传** |
 
 仓库包含本产品的 Go、HTML/JavaScript 和设备 C/C++ 源码；前端由 Go 内嵌提供，无独立前端服务。Linx、豆包、DeepSeek、MiniMax 是外部平台，需自行开通账号和配置权限，其服务端源码不属于本项目。固件基于 XiaoZhi，保留[上游许可证](../xiaozhi-esp32/LICENSE)和依赖声明；不能把上游固件全部算作团队原创。
 
@@ -109,6 +109,6 @@ go run ./cmd/eval -config config.local.json -e2e
 
 本次交付整理仅核对源码、Issue/PR 和文档链接，不新增“真机整局通过”的声明。既有结果及待补齐项统一见技术方案第 10 节。
 
-## 4. Demo 与最终提交
+## 4. Demo 视频
 
-先按[录制脚本](demo/README.md)完成真机整局，再制作约 3 分钟展示版。录好后将 MP4 与本页、根 README 中的视频入口一起通过 `codex/*` 分支和 PR 提交。评委应能从仓库首页直接打开视频；目前视频项尚未完成。
+视频待上传，完成后在仓库首页和本页补充链接。
