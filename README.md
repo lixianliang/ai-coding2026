@@ -10,7 +10,6 @@
 - manual 收音结束后，设备把完整语音提交给 Go 服务做 ASR 和判题；服务端不转发玩家之间的讨论音频，豆包 ASR 在会话内提供匿名说话人编号用于积分。
 - 设备网络链路使用 Opus，服务端内部统一 PCM 16 kHz、单声道、16-bit。
 - 猜中或超时后朗读固定汤底并进入讨论态；说“游戏继续”才开下一局，说“退出游戏”释放房间。
-- 当前不做 AI 玩家、真人主持和掉线恢复。
 
 项目文档按四个主题整理：
 
@@ -23,20 +22,8 @@
 
 ## AI 工程效率
 
-仓库内置可重复使用的研发 skills，减少每次从零排查环境与回归链路：
+质量评估、真实语音链路、自动化测试、工程门禁和研发 skills 统一见 [AI 工程效率文档](docs/ai-engineering-efficiency.md)。
 
-- `.agents/skills/xiaozhi-yunliao-s3-firmware/`：`yunliao-s3` 构建、烧录、串口日志与真机验收。
-- `.agents/skills/go-test-engineering/`：Go 单测/E2E 分层、race 与异步测试约束。
-- `.agents/skills/go-provider-debugging/`：ASR/LLM/TTS provider 与完整语音链路定位。
-- `.agents/skills/quick-pr/`：强制 `codex/*` 分支、限定路径检查、提交和 PR 流程。
+## 演示
 
-常用回归命令：
-
-```bash
-cd server
-go run ./cmd/eval -config config.local.json
-go run ./cmd/eval -config config.local.json -e2e
-go test -race ./...
-```
-
-- [Demo 视频](docs/demo/turtle-soup-demo.mp4)：实际设备录制。
+[Demo 视频](docs/demo/turtle-soup-demo.mp4)：实际设备录制。
