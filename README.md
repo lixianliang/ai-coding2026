@@ -40,4 +40,3 @@ go test -race ./...
 ```
 
 - [Demo 视频](docs/demo/turtle-soup-demo.mp4)：实际设备录制。
-- [项目贡献记录](docs/contributions.md)：按 Issue/PR 整理分工。

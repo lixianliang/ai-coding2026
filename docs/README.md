@@ -6,7 +6,6 @@
 - [产品设计](product-design.md)：游戏形态、玩家流程、规则、积分、功能边界和演示脚本。
 - [架构设计](architecture.md)：Linx、XiaoZhi 固件、Go 游戏服务、MCP、Game WSS 和语音状态机。
 - [部署与使用](deployment.md)：配置、启动、固件/Linx 接入、Game WSS、玩家操作和验证命令。
-- [项目贡献记录](contributions.md)：按 Issue/PR 整理的设计输入与交付分工。
 - [Demo 视频](demo/turtle-soup-demo.mp4)：实际设备录制的游戏演示。
 
 代码入口：
